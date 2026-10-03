@@ -1,0 +1,23 @@
+# Environment variables
+.env
+.env.*
+
+# Dependencies
+node_modules/
+
+# Generated Prisma client
+generated/
+
+# Logs
+*.log
+npm-debug.log*
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# AI/tooling folders
+.agents/
+.claude/
+.cursor/
+.devin/
