@@ -27,6 +27,7 @@ model Organization {
 
   memberships Membership[]
   teams       Team[]
+  entities    Entity[]
 }
 
 model Team {
@@ -40,7 +41,7 @@ model Team {
   organization Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
 
   members TeamMember[]
-  
+
   @@unique([organizationId, slug])
 }
 
@@ -70,3 +71,27 @@ model Membership {
   @@unique([userId, organizationId])
 }
 
+model EntityType {
+  id        String   @id @default(uuid())
+  name      String   @unique
+  createdAt DateTime @default(now())
+
+  entities Entity[]
+}
+
+
+model Entity {
+  id             String   @id @default(uuid())
+  organizationId String
+  entityTypeId   String
+  name           String
+  description    String?
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+
+  organization Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  entityType   EntityType   @relation(fields: [entityTypeId], references: [id])
+
+  @@index([organizationId])
+  @@index([entityTypeId])
+}
