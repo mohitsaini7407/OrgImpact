@@ -14,7 +14,8 @@ model User {
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
-  memberships Membership[]
+  memberships     Membership[]
+  teamMemberships TeamMember[]
 }
 
 model Organization {
@@ -25,6 +26,35 @@ model Organization {
   updatedAt DateTime @updatedAt
 
   memberships Membership[]
+  teams       Team[]
+}
+
+model Team {
+  id             String       @id @default(uuid())
+  organizationId String
+  name           String
+  slug           String
+  createdAt      DateTime     @default(now())
+  updatedAt      DateTime     @updatedAt
+
+  organization Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+
+  members TeamMember[]
+  
+  @@unique([organizationId, slug])
+}
+
+model TeamMember {
+  id        String   @id @default(uuid())
+  userId    String
+  teamId    String
+  role      String   @default("MEMBER")
+  createdAt DateTime @default(now())
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+  team Team @relation(fields: [teamId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, teamId])
 }
 
 model Membership {
@@ -39,3 +69,4 @@ model Membership {
 
   @@unique([userId, organizationId])
 }
+
