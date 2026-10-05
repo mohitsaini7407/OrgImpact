@@ -1,5 +1,7 @@
 import express from "express";
 import organizationRoutes from "./routes/organization.routes.js";
+import membershipRoutes from "./routes/membership.routes.js";
+import userRoutes from "./routes/user.routes.js";
 import { errorHandler } from "./middleware/error-handler.js";
 
 const app = express();
@@ -14,6 +16,8 @@ app.get("/health", (_req, res) => {
 });
 
 app.use("/organizations", organizationRoutes);
+app.use("/memberships", membershipRoutes);
+app.use("/users", userRoutes);
 
 // Error handler must be LAST
 app.use(errorHandler);
