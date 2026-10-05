@@ -1,4 +1,5 @@
 import { Request, Response } from "express";
+
 import {
   createMembership,
   getOrganizationMembers,
@@ -9,6 +10,20 @@ export async function createMembershipController(
   res: Response,
 ) {
   const { userId, organizationId, role } = req.body;
+
+  if (!req.organizationRole) {
+    res.status(403).json({
+      error: "Organization role not found",
+    });
+    return;
+  }
+
+  if (role === "OWNER" && req.organizationRole !== "OWNER") {
+    res.status(403).json({
+      error: "Only an organization owner can assign the OWNER role",
+    });
+    return;
+  }
 
   const membership = await createMembership(
     userId,
@@ -26,7 +41,10 @@ export async function getOrganizationMembersController(
   const organizationId = req.params.organizationId;
 
   if (typeof organizationId !== "string") {
-    return res.status(400).json({ message: "Invalid organizationId" });
+    res.status(400).json({
+      message: "Invalid organizationId",
+    });
+    return;
   }
 
   const members = await getOrganizationMembers(organizationId);

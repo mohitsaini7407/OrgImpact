@@ -1,17 +1,11 @@
-// import app from "./app.js";
-
-// const PORT = process.env.PORT ?? 5000;
-
-// app.listen(PORT, () => {
-//   console.log(`OrgImpact API running on port ${PORT}`);
-// });
-
-
+import "dotenv/config";
+import http from "http";
 
 import app from "./app.js";
 import { prisma } from "./lib/prisma.js";
+import { initializeSocket } from "./socket.js";
 
-const PORT = process.env.PORT ?? 5000;
+const PORT = Number(process.env.PORT) || 5000;
 
 async function startServer() {
   try {
@@ -19,11 +13,16 @@ async function startServer() {
 
     console.log("Database connected successfully");
 
-    app.listen(PORT, () => {
+    const httpServer = http.createServer(app);
+
+    initializeSocket(httpServer);
+
+    httpServer.listen(PORT, () => {
       console.log(`OrgImpact API running on port ${PORT}`);
+      console.log(`Socket.IO running on port ${PORT}`);
     });
   } catch (error) {
-    console.error("Failed to connect to database:", error);
+    console.error("Failed to start server:", error);
     process.exit(1);
   }
 }
