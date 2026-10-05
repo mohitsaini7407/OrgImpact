@@ -2,6 +2,8 @@ import express from "express";
 import organizationRoutes from "./routes/organization.routes.js";
 import membershipRoutes from "./routes/membership.routes.js";
 import userRoutes from "./routes/user.routes.js";
+import teamRoutes from "./routes/team.routes.js";
+import teamMemberRoutes from "./routes/team-member.routes.js";
 import { errorHandler } from "./middleware/error-handler.js";
 
 const app = express();
@@ -18,8 +20,9 @@ app.get("/health", (_req, res) => {
 app.use("/organizations", organizationRoutes);
 app.use("/memberships", membershipRoutes);
 app.use("/users", userRoutes);
+app.use("/teams", teamRoutes);
+app.use("/team-members", teamMemberRoutes);
 
-// Error handler must be LAST
 app.use(errorHandler);
 
 export default app;
