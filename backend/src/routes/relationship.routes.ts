@@ -11,6 +11,7 @@ import { asyncHandler } from "../middleware/async-handler.js";
 import { authenticate } from "../middleware/auth.js";
 import { requireOrganizationMember } from "../middleware/organization-auth.js";
 import { requireRelationshipOrganizationMember } from "../middleware/relationship-organization-auth.js";
+import { requireRole } from "../middleware/require-role.js";
 
 import { createRelationshipSchema } from "./relationship.schema.js";
 
@@ -21,6 +22,7 @@ router.post(
   authenticate,
   validate(createRelationshipSchema),
   requireOrganizationMember,
+  requireRole("OWNER", "ADMIN"),
   asyncHandler(createRelationshipController),
 );
 
@@ -35,6 +37,7 @@ router.delete(
   "/:relationshipId",
   authenticate,
   requireRelationshipOrganizationMember,
+  requireRole("OWNER", "ADMIN"),
   asyncHandler(deleteRelationshipController),
 );
 

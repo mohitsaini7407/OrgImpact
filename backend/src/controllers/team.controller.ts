@@ -53,7 +53,19 @@ export async function getTeamByIdController(
     return;
   }
 
-  const team = await getTeamById(teamId);
+  const organizationId = req.organizationId;
+
+  if (!organizationId) {
+    res.status(403).json({
+      error: "Organization context is required",
+    });
+    return;
+  }
+
+  const team = await getTeamById(
+    teamId,
+    organizationId,
+  );
 
   if (!team) {
     res.status(404).json({

@@ -43,9 +43,11 @@ export function errorHandler(
       "Team not found": 404,
       "User not found": 404,
       "Organization not found": 404,
+      "User must belong to the same organization as the team": 400,
       "Invalid membership role. Allowed roles: OWNER, ADMIN, MEMBER": 400,
       "Source and target entities cannot be the same": 400,
       "Source and target entities must belong to the same organization": 400,
+      "User is already a member of this organization": 409,
     };
 
     const statusCode = knownErrors[error.message];

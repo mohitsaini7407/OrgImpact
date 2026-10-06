@@ -8,5 +8,4 @@ export const createRelationshipSchema = z.object({
     .string()
     .trim()
     .min(1, "Relationship type is required"),
-  createdById: z.string().uuid("Invalid creator ID").optional(),
 });

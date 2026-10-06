@@ -27,10 +27,14 @@ export async function getOrganizationTeams(
   });
 }
 
-export async function getTeamById(teamId: string) {
-  return prisma.team.findUnique({
+export async function getTeamById(
+  teamId: string,
+  organizationId: string,
+) {
+  return prisma.team.findFirst({
     where: {
       id: teamId,
+      organizationId,
     },
   });
 }

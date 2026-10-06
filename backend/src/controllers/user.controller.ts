@@ -1,25 +1,20 @@
 import { Request, Response } from "express";
-import {
-  createUser,
-  getUsers,
-} from "../services/user.service.js";
+import { getUsers } from "../services/user.service.js";
 
-export async function createUserController(
+export async function getUsersController(
   req: Request,
   res: Response,
 ) {
-  const { name, email } = req.body;
+  const userId = req.userId;
 
-  const user = await createUser(name, email);
+  if (!userId) {
+    res.status(401).json({
+      error: "Authentication required",
+    });
+    return;
+  }
 
-  res.status(201).json(user);
-}
-
-export async function getUsersController(
-  _req: Request,
-  res: Response,
-) {
-  const users = await getUsers();
+  const users = await getUsers(userId);
 
   res.status(200).json(users);
 }

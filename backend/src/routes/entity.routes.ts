@@ -13,6 +13,7 @@ import { asyncHandler } from "../middleware/async-handler.js";
 import { authenticate } from "../middleware/auth.js";
 import { requireOrganizationMember } from "../middleware/organization-auth.js";
 import { requireEntityOrganizationMember } from "../middleware/entity-organization-auth.js";
+import { requireRole } from "../middleware/require-role.js";
 
 import {
   createEntitySchema,
@@ -26,6 +27,7 @@ router.post(
   authenticate,
   validate(createEntitySchema),
   requireOrganizationMember,
+  requireRole("OWNER", "ADMIN"),
   asyncHandler(createEntityController),
 );
 
@@ -47,6 +49,7 @@ router.patch(
   "/:entityId",
   authenticate,
   requireEntityOrganizationMember,
+  requireRole("OWNER", "ADMIN"),
   validate(updateEntitySchema),
   asyncHandler(updateEntityController),
 );
@@ -55,6 +58,7 @@ router.delete(
   "/:entityId",
   authenticate,
   requireEntityOrganizationMember,
+  requireRole("OWNER", "ADMIN"),
   asyncHandler(deleteEntityController),
 );
 

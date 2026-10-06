@@ -50,8 +50,8 @@ export async function requireEntityOrganizationMember(
   });
 
   if (!membership) {
-    res.status(403).json({
-      error: "You are not a member of this organization",
+    res.status(404).json({
+      error: "Entity not found",
     });
     return;
   }

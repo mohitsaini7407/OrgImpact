@@ -2,7 +2,6 @@ import { Request, Response } from "express";
 import {
   createRelationship,
   getOrganizationRelationships,
-  getRelationshipById,
   deleteRelationship,
 } from "../services/relationship.service.js";
 
@@ -15,8 +14,16 @@ export async function createRelationshipController(
     sourceEntityId,
     targetEntityId,
     relationshipType,
-    createdById,
   } = req.body;
+
+  const createdById = req.userId;
+
+  if (!createdById) {
+    res.status(401).json({
+      error: "Authentication required",
+    });
+    return;
+  }
 
   const relationship = await createRelationship(
     organizationId,
@@ -61,17 +68,19 @@ export async function deleteRelationshipController(
     return;
   }
 
-  const relationship =
-    await getRelationshipById(relationshipId);
+  const organizationId = req.organizationId;
 
-  if (!relationship) {
-    res.status(404).json({
-      error: "Relationship not found",
+  if (!organizationId) {
+    res.status(403).json({
+      error: "Organization context is required",
     });
     return;
   }
 
-  await deleteRelationship(relationshipId);
+  await deleteRelationship(
+    relationshipId,
+    organizationId,
+  );
 
   res.status(204).send();
 }

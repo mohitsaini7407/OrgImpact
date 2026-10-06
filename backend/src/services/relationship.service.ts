@@ -90,9 +90,13 @@ export async function getRelationshipById(
 
 export async function deleteRelationship(
   relationshipId: string,
+  organizationId: string,
 ) {
-  const relationship = await prisma.relationship.findUnique({
-    where: { id: relationshipId },
+  const relationship = await prisma.relationship.findFirst({
+    where: {
+      id: relationshipId,
+      organizationId,
+    },
   });
 
   if (!relationship) {
@@ -100,16 +104,19 @@ export async function deleteRelationship(
   }
 
   await prisma.relationship.delete({
-    where: { id: relationshipId },
+    where: {
+      id: relationshipId,
+    },
   });
 
   await publishRealtimeEvent(
     "RELATIONSHIP_DELETED",
-    relationship.organizationId,
+    organizationId,
     {
       id: relationship.id,
       organizationId: relationship.organizationId,
-    });
+    },
+  );
 
   return {
     id: relationship.id,

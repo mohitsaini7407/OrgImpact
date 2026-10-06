@@ -18,7 +18,20 @@ export async function createMembershipController(
     return;
   }
 
-  if (role === "OWNER" && req.organizationRole !== "OWNER") {
+  if (
+    role === "ADMIN" &&
+    req.organizationRole !== "OWNER"
+  ) {
+    res.status(403).json({
+      error: "Only an organization owner can assign the ADMIN role",
+    });
+    return;
+  }
+
+  if (
+    role === "OWNER" &&
+    req.organizationRole !== "OWNER"
+  ) {
     res.status(403).json({
       error: "Only an organization owner can assign the OWNER role",
     });

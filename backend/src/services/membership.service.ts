@@ -15,6 +15,39 @@ export async function createMembership(
     );
   }
 
+  const [user, organization] = await Promise.all([
+    prisma.user.findUnique({
+      where: { id: userId },
+    }),
+    prisma.organization.findUnique({
+      where: { id: organizationId },
+    }),
+  ]);
+
+  if (!user) {
+    throw new Error("User not found");
+  }
+
+  if (!organization) {
+    throw new Error("Organization not found");
+  }
+
+  const existingMembership =
+    await prisma.membership.findUnique({
+      where: {
+        userId_organizationId: {
+          userId,
+          organizationId,
+        },
+      },
+    });
+
+  if (existingMembership) {
+    throw new Error(
+      "User is already a member of this organization",
+    );
+  }
+
   return prisma.membership.create({
     data: {
       userId,
