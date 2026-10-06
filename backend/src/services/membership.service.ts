@@ -21,6 +21,13 @@ export async function createMembership(
       organizationId,
       role,
     },
+    select: {
+      id: true,
+      userId: true,
+      organizationId: true,
+      role: true,
+      createdAt: true,
+    },
   });
 }
 
@@ -31,8 +38,20 @@ export async function getOrganizationMembers(
     where: {
       organizationId,
     },
-    include: {
-      user: true,
+    select: {
+      id: true,
+      userId: true,
+      organizationId: true,
+      role: true,
+      createdAt: true,
+      user: {
+        select: {
+          id: true,
+          name: true,
+          email: true,
+          createdAt: true,
+        },
+      },
     },
     orderBy: {
       createdAt: "asc",
