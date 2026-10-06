@@ -23,6 +23,7 @@ type GraphNode = {
   name: string;
   description: string | null;
   entityType: string;
+  criticality: "LOW" | "MEDIUM" | "HIGH" | "CRITICAL";
 };
 
 type GraphEdge = {
@@ -57,12 +58,37 @@ type ImpactResponse = {
   affectedEntities: ImpactEntity[];
 };
 
-type ActiveView = "dashboard" | "entities" | "relationships" | "teams" | "members";
+type Incident = {
+  id: string; organizationId: string; affectedEntityId: string; createdById: string;
+  title: string; description: string | null; severity: "LOW" | "MEDIUM" | "HIGH" | "CRITICAL";
+  status: "OPEN" | "INVESTIGATING" | "RESOLVED"; createdAt: string; updatedAt: string; resolvedAt: string | null;
+  affectedEntity: GraphNode & { entityType: { id: string; name: string } }; createdBy: UserSummary;
+};
+
+type IncidentForm = { title: string; description: string; affectedEntityId: string; severity: Incident["severity"] };
+
+type ActiveView =
+  | "dashboard"
+  | "entities"
+  | "relationships"
+  | "teams"
+  | "members"
+  | "incidents"
+  | "simulation";
+
+type SimulationResult = {
+  rootEntity: GraphNode;
+  totalAffected: number;
+  affectedEntities: ImpactEntity[];
+  riskScore: number;
+  riskLevel: "LOW" | "MEDIUM" | "HIGH" | "CRITICAL";
+};
 
 type EntityForm = {
   name: string;
   description: string;
   entityTypeId: string;
+  criticality: "LOW" | "MEDIUM" | "HIGH" | "CRITICAL";
 };
 
 type RelationshipForm = {
@@ -75,6 +101,7 @@ const emptyEntityForm: EntityForm = {
   name: "",
   description: "",
   entityTypeId: "",
+  criticality: "MEDIUM",
 };
 
 const emptyRelationshipForm: RelationshipForm = {
@@ -160,6 +187,8 @@ const emptyMembershipForm: MembershipForm = {
   role: "MEMBER",
 };
 
+const emptyIncidentForm: IncidentForm = { title: "", description: "", affectedEntityId: "", severity: "MEDIUM" };
+
 function App() {
   const [token, setToken] = useState<string | null>(
     localStorage.getItem("token"),
@@ -234,6 +263,28 @@ function App() {
   const [membershipModalOpen, setMembershipModalOpen] = useState(false);
   const [membershipForm, setMembershipForm] = useState<MembershipForm>(emptyMembershipForm);
   const [membershipSaving, setMembershipSaving] = useState(false);
+
+  const [incidents, setIncidents] = useState<Incident[]>([]);
+  const [incidentsLoading, setIncidentsLoading] = useState(false);
+  const [incidentError, setIncidentError] = useState("");
+  const [selectedIncident, setSelectedIncident] = useState<Incident | null>(null);
+  const [incidentModalOpen, setIncidentModalOpen] = useState(false);
+  const [incidentForm, setIncidentForm] = useState<IncidentForm>(emptyIncidentForm);
+  const [incidentSaving, setIncidentSaving] = useState(false);
+  const [editingIncident, setEditingIncident] = useState<Incident | null>(null);
+
+  const [simulationEntityId, setSimulationEntityId] = useState("");
+  const [simulationResult, setSimulationResult] =
+    useState<SimulationResult | null>(null);
+  const [simulationLoading, setSimulationLoading] = useState(false);
+  const [simulationError, setSimulationError] = useState("");
+  const [simulationRiskMap, setSimulationRiskMap] = useState<
+    Record<string, { score: number; level: "LOW" | "MEDIUM" | "HIGH" | "CRITICAL" }>
+  >({});
+  const [simulationOverviewLoading, setSimulationOverviewLoading] =
+    useState(false);
+  const [simulationCriticalityFilter, setSimulationCriticalityFilter] =
+    useState<"ALL" | "LOW" | "MEDIUM" | "HIGH" | "CRITICAL">("ALL");
 
   useEffect(() => {
     if (!token) {
@@ -378,8 +429,23 @@ function App() {
     socket.on("ENTITY_UPDATED", handleEntityUpdated);
     socket.on("ENTITY_DELETED", handleEntityDeleted);
 
+    const handleIncidentCreated = (incident: Incident) => {
+      setIncidents((current) => [incident, ...current.filter((item) => item.id !== incident.id)]);
+    };
+    const handleIncidentUpdated = (incident: Incident) => {
+      setIncidents((current) => current.map((item) => item.id === incident.id ? incident : item));
+      setSelectedIncident((current) => current?.id === incident.id ? incident : current);
+    };
+    const handleIncidentDeleted = (incident: { id: string; organizationId: string }) => {
+      setIncidents((current) => current.filter((item) => item.id !== incident.id));
+      setSelectedIncident((current) => current?.id === incident.id ? null : current);
+    };
+
     socket.on("RELATIONSHIP_CREATED", handleRelationshipCreated);
     socket.on("RELATIONSHIP_DELETED", handleRelationshipDeleted);
+    socket.on("INCIDENT_CREATED", handleIncidentCreated);
+    socket.on("INCIDENT_UPDATED", handleIncidentUpdated);
+    socket.on("INCIDENT_DELETED", handleIncidentDeleted);
 
     return () => {
       socket.off("ENTITY_CREATED", handleEntityCreated);
@@ -388,6 +454,9 @@ function App() {
 
       socket.off("RELATIONSHIP_CREATED", handleRelationshipCreated);
       socket.off("RELATIONSHIP_DELETED", handleRelationshipDeleted);
+      socket.off("INCIDENT_CREATED", handleIncidentCreated);
+      socket.off("INCIDENT_UPDATED", handleIncidentUpdated);
+      socket.off("INCIDENT_DELETED", handleIncidentDeleted);
     };
   }, [token]);
 
@@ -637,6 +706,10 @@ function App() {
       void loadUsers();
       void loadCurrentUser();
     }
+  }, [activeView, token]);
+
+  useEffect(() => {
+    if (activeView === "incidents" && token) void loadIncidents();
   }, [activeView, token]);
 
   useEffect(() => {
@@ -964,10 +1037,13 @@ function App() {
 
   function openCreateEntity() {
     setEditingEntity(null);
+
     setEntityForm({
       ...emptyEntityForm,
       entityTypeId: entityTypes[0]?.id ?? "",
+      criticality: "MEDIUM",
     });
+
     setEntityError("");
     setEntityModalOpen(true);
   }
@@ -980,11 +1056,14 @@ function App() {
     );
 
     setEditingEntity(entity);
+
     setEntityForm({
       name: entity.name,
       description: entity.description ?? "",
       entityTypeId: matchingType?.id ?? "",
+      criticality: entity.criticality ?? "MEDIUM",
     });
+
     setEntityError("");
     setEntityModalOpen(true);
   }
@@ -1019,16 +1098,22 @@ function App() {
         ? {
             name: entityForm.name.trim(),
             ...(entityForm.description.trim()
-              ? { description: entityForm.description.trim() }
+              ? {
+                  description: entityForm.description.trim(),
+                }
               : {}),
+            criticality: entityForm.criticality,
           }
         : {
             organizationId: ORGANIZATION_ID,
             entityTypeId: entityForm.entityTypeId,
             name: entityForm.name.trim(),
             ...(entityForm.description.trim()
-              ? { description: entityForm.description.trim() }
+              ? {
+                  description: entityForm.description.trim(),
+                }
               : {}),
+            criticality: entityForm.criticality,
           };
 
       const response = await fetch(url, {
@@ -1263,6 +1348,298 @@ function App() {
     }
   }
 
+  async function loadIncidents() {
+    if (!localStorage.getItem("token")) return;
+    try {
+      setIncidentsLoading(true); setIncidentError("");
+      const response = await fetch(`${API_BASE_URL}/incidents/organization/${ORGANIZATION_ID}`, { headers: getAuthHeaders() });
+      if (await handleUnauthorized(response)) throw new Error("Authentication failed. Please login again.");
+      const data = await response.json().catch(() => []);
+      if (!response.ok) throw new Error(data?.error || data?.message || `Unable to load incidents (${response.status})`);
+      setIncidents(Array.isArray(data) ? data : data?.incidents ?? []);
+    } catch (err) { setIncidentError(err instanceof Error ? err.message : "Unable to load incidents."); }
+    finally { setIncidentsLoading(false); }
+  }
+
+  function openCreateIncident() {
+    setEditingIncident(null); setIncidentError("");
+    setIncidentForm({ ...emptyIncidentForm, affectedEntityId: graph?.nodes[0]?.id ?? "" });
+    setIncidentModalOpen(true);
+  }
+
+  function openEditIncident(incident: Incident) {
+    setEditingIncident(incident); setIncidentError("");
+    setIncidentForm({ title: incident.title, description: incident.description ?? "", affectedEntityId: incident.affectedEntityId, severity: incident.severity });
+    setIncidentModalOpen(true);
+  }
+
+  function closeIncidentModal() {
+    if (incidentSaving) return;
+    setIncidentModalOpen(false); setEditingIncident(null); setIncidentForm(emptyIncidentForm); setIncidentError("");
+  }
+
+  async function saveIncident() {
+    if (!incidentForm.title.trim()) { setIncidentError("Incident title is required."); return; }
+    if (!incidentForm.affectedEntityId) { setIncidentError("Please select the affected entity."); return; }
+    try {
+      setIncidentSaving(true); setIncidentError("");
+      const url = editingIncident ? `${API_BASE_URL}/incidents/${editingIncident.id}` : `${API_BASE_URL}/incidents`;
+      const body = editingIncident ? { title: incidentForm.title.trim(), description: incidentForm.description.trim() || null, severity: incidentForm.severity } : { organizationId: ORGANIZATION_ID, affectedEntityId: incidentForm.affectedEntityId, title: incidentForm.title.trim(), description: incidentForm.description.trim() || undefined, severity: incidentForm.severity };
+      const response = await fetch(url, { method: editingIncident ? "PATCH" : "POST", headers: getAuthHeaders(), body: JSON.stringify(body) });
+      if (await handleUnauthorized(response)) throw new Error("Authentication failed. Please login again.");
+      const data = await response.json().catch(() => null);
+      if (!response.ok) throw new Error(data?.error || data?.message || "Unable to save incident.");
+      closeIncidentModal(); await loadIncidents();
+      if (!editingIncident) { const entity = graph?.nodes.find((item) => item.id === data?.affectedEntityId); if (entity) { setSelectedIncident(data); setSelectedEntity(entity); setFocusedEntityId(entity.id); void analyzeImpact(entity.id); } }
+    } catch (err) { setIncidentError(err instanceof Error ? err.message : "Unable to save incident."); }
+    finally { setIncidentSaving(false); }
+  }
+
+  async function updateIncidentStatus(incident: Incident, status: Incident["status"]) {
+    try {
+      setIncidentError("");
+      const response = await fetch(`${API_BASE_URL}/incidents/${incident.id}`, { method: "PATCH", headers: getAuthHeaders(), body: JSON.stringify({ status }) });
+      if (await handleUnauthorized(response)) throw new Error("Authentication failed. Please login again.");
+      const data = await response.json().catch(() => null);
+      if (!response.ok) throw new Error(data?.error || data?.message || "Unable to update incident status.");
+      setIncidents((current) => current.map((item) => item.id === incident.id ? data : item)); setSelectedIncident(data);
+    } catch (err) { setIncidentError(err instanceof Error ? err.message : "Unable to update incident status."); }
+  }
+
+  async function deleteIncident(incident: Incident) {
+    if (!window.confirm(`Delete incident "${incident.title}"?`)) return;
+    try {
+      setIncidentError("");
+      const response = await fetch(`${API_BASE_URL}/incidents/${incident.id}`, { method: "DELETE", headers: getAuthHeaders() });
+      if (await handleUnauthorized(response)) throw new Error("Authentication failed. Please login again.");
+      const data = await response.json().catch(() => null);
+      if (!response.ok) throw new Error(data?.error || data?.message || "Unable to delete incident.");
+      setIncidents((current) => current.filter((item) => item.id !== incident.id));
+      if (selectedIncident?.id === incident.id) { setSelectedIncident(null); setSelectedEntity(null); setImpact(null); setFocusedEntityId(null); }
+    } catch (err) { setIncidentError(err instanceof Error ? err.message : "Unable to delete incident."); }
+  }
+
+  function selectIncident(incident: Incident) {
+    setSelectedIncident(incident);
+    const entity = graph?.nodes.find((item) => item.id === incident.affectedEntityId);
+    if (!entity) { setIncidentError("The affected entity is not currently available in the graph."); return; }
+    setIncidentError(""); setSelectedEntity(entity); setImpact(null); setImpactError(""); setFocusedEntityId(entity.id); void analyzeImpact(entity.id);
+    requestAnimationFrame(() => focusEntity(entity.id));
+  }
+
+  function calculateSimulationRisk(
+    criticality: GraphNode["criticality"],
+    totalAffected: number,
+    maxDepth: number,
+  ) {
+    const criticalityScore: Record<GraphNode["criticality"], number> = {
+      LOW: 10,
+      MEDIUM: 30,
+      HIGH: 60,
+      CRITICAL: 85,
+    };
+
+    const safeAffected = Number.isFinite(totalAffected)
+      ? Math.max(0, totalAffected)
+      : 0;
+
+    const safeDepth = Number.isFinite(maxDepth)
+      ? Math.max(0, maxDepth)
+      : 0;
+
+    const baseScore = criticalityScore[criticality] ?? 30;
+    const blastRadiusScore = Math.min(30, safeAffected * 10);
+    const depthScore = Math.min(20, Math.max(0, safeDepth - 1) * 10);
+
+    const score = Math.min(
+      100,
+      baseScore + blastRadiusScore + depthScore,
+    );
+
+    if (score >= 80) return { score, level: "CRITICAL" as const };
+    if (score >= 60) return { score, level: "HIGH" as const };
+    if (score >= 35) return { score, level: "MEDIUM" as const };
+    return { score, level: "LOW" as const };
+  }
+
+  const filteredSimulationEntities = useMemo(() => {
+    const entities = graph?.nodes ?? [];
+
+    if (simulationCriticalityFilter === "ALL") {
+      return entities;
+    }
+
+    return entities.filter(
+      (entity) => entity.criticality === simulationCriticalityFilter,
+    );
+  }, [graph, simulationCriticalityFilter]);
+
+  async function loadSimulationRiskOverview() {
+    if (!graph?.nodes?.length) {
+      return;
+    }
+
+    try {
+      setSimulationOverviewLoading(true);
+
+      const results = await Promise.all(
+        graph.nodes.map(async (entity) => {
+          try {
+            const response = await fetch(
+              `${API_BASE_URL}/impact/${entity.id}`,
+              { headers: getAuthHeaders() },
+            );
+
+            if (!response.ok) {
+              return null;
+            }
+
+            const data: ImpactResponse = await response.json();
+
+            const maxDepth =
+              data.affectedEntities.length > 0
+                ? Math.max(
+                    ...data.affectedEntities.map((item) => item.depth),
+                  )
+                : 0;
+
+            const risk = calculateSimulationRisk(
+              entity.criticality,
+              data.totalAffected,
+              maxDepth,
+            );
+
+            return {
+              id: entity.id,
+              score: risk.score,
+              level: risk.level,
+            };
+          } catch {
+            return null;
+          }
+        }),
+      );
+
+      const riskMap: Record<
+        string,
+        { score: number; level: "LOW" | "MEDIUM" | "HIGH" | "CRITICAL" }
+      > = {};
+
+      for (const result of results) {
+        if (result) {
+          riskMap[result.id] = {
+            score: result.score,
+            level: result.level,
+          };
+        }
+      }
+
+      setSimulationRiskMap(riskMap);
+    } finally {
+      setSimulationOverviewLoading(false);
+    }
+  }
+
+  useEffect(() => {
+    if (activeView === "simulation" && graph?.nodes?.length) {
+      void loadSimulationRiskOverview();
+    }
+  }, [activeView, graph]);
+
+  async function runChangeSimulation(entityIdOverride?: string) {
+    const entityId = entityIdOverride ?? simulationEntityId;
+
+    if (!entityId) {
+      setSimulationError("Please select an entity to simulate.");
+      return;
+    }
+
+    try {
+      setSimulationLoading(true);
+      setSimulationError("");
+      setSimulationResult(null);
+
+      const response = await fetch(
+        `${API_BASE_URL}/impact/${entityId}`,
+        { headers: getAuthHeaders() },
+      );
+
+      if (await handleUnauthorized(response)) {
+        throw new Error("Authentication failed. Please login again.");
+      }
+
+      const data = await response.json().catch(() => null);
+
+      if (!response.ok) {
+        throw new Error(
+          data?.error ||
+            data?.message ||
+            `Unable to simulate change (${response.status})`,
+        );
+      }
+
+      const impactData: ImpactResponse = data;
+
+      const maxDepth =
+        impactData.affectedEntities.length > 0
+          ? Math.max(
+              ...impactData.affectedEntities.map((entity) => entity.depth),
+            )
+          : 0;
+
+      const rootEntity = graph?.nodes.find(
+        (entity) => entity.id === entityId,
+      );
+
+      if (!rootEntity) {
+        throw new Error("Selected entity is no longer available.");
+      }
+
+      const risk = calculateSimulationRisk(
+        rootEntity.criticality,
+        impactData.totalAffected,
+        maxDepth,
+      );
+
+      setSimulationResult({
+        rootEntity: impactData.rootEntity,
+        totalAffected: impactData.totalAffected,
+        affectedEntities: impactData.affectedEntities,
+        riskScore: risk.score,
+        riskLevel: risk.level,
+      });
+
+      setSelectedEntity(impactData.rootEntity);
+      setImpact(impactData);
+      setImpactError("");
+      setFocusedEntityId(impactData.rootEntity.id);
+
+      requestAnimationFrame(() => {
+        focusEntity(impactData.rootEntity.id);
+      });
+    } catch (err) {
+      console.error(err);
+      setSimulationError(
+        err instanceof Error ? err.message : "Unable to simulate change.",
+      );
+    } finally {
+      setSimulationLoading(false);
+    }
+  }
+
+  function selectSimulationEntity(entityId: string) {
+    setSimulationEntityId(entityId);
+    setSimulationResult(null);
+    setSimulationError("");
+    setSelectedEntity(null);
+    setImpact(null);
+    setFocusedEntityId(null);
+
+    if (entityId) {
+      void runChangeSimulation(entityId);
+    }
+  }
+
   function openCreateTeam() {
     setTeamForm(emptyTeamForm);
     setTeamError("");
@@ -1469,6 +1846,19 @@ function App() {
               onClick={() => setActiveView("members")}
             >
               Members
+            </button>
+            <button
+              className={activeView === "incidents" ? "nav-button active" : "nav-button"}
+              onClick={() => setActiveView("incidents")}
+            >
+              Incidents
+            </button>
+
+            <button
+              className={activeView === "simulation" ? "nav-button active" : "nav-button"}
+              onClick={() => setActiveView("simulation")}
+            >
+              Simulate Change
             </button>
           </nav>
 
@@ -1943,6 +2333,277 @@ function App() {
               </div>
             )}
           </section>
+        ) : activeView === "incidents" ? (
+          <section className="incidents-page">
+            <div className="page-header">
+              <div><span className="page-eyebrow">OPERATIONS</span><h2>Incidents</h2><p>Track failures and understand their dependency blast radius.</p></div>
+              <button className="primary-button" onClick={openCreateIncident} disabled={!graph?.nodes.length}>+ Create Incident</button>
+            </div>
+            {incidentError && !incidentModalOpen && <div className="page-error">{incidentError}</div>}
+            <div className="incident-layout">
+              <section className="incidents-list-panel">
+                <div className="section-heading-row"><div><span className="page-eyebrow">INCIDENTS</span><h3>{incidents.length} Incidents</h3></div>{incidentsLoading && <span className="loading-text">Loading...</span>}</div>
+                {incidentsLoading ? <div className="team-loading"><div className="small-loader" /> Loading incidents...</div> : incidents.length === 0 ? <div className="empty-management"><div className="empty-management-icon">!</div><h3>No incidents yet</h3><p>Create an incident to see its blast radius.</p><button className="primary-button" onClick={openCreateIncident} disabled={!graph?.nodes.length}>Create Incident</button></div> : <div className="incident-card-list">{incidents.map((incident) => <button key={incident.id} className={`incident-card ${selectedIncident?.id === incident.id ? "active" : ""}`} onClick={() => selectIncident(incident)}><div className="incident-card-top"><span className={`incident-severity ${incident.severity.toLowerCase()}`}>{incident.severity}</span><span className={`incident-status ${incident.status.toLowerCase()}`}>{incident.status}</span></div><strong>{incident.title}</strong><span className="incident-affected">Affects: {incident.affectedEntity?.name ?? "Unknown entity"}</span><small>{new Date(incident.createdAt).toLocaleString()}</small></button>)}</div>}
+              </section>
+              <section className="incident-detail-panel">
+                {!selectedIncident ? <div className="empty-management detail-empty"><div className="empty-management-icon">!</div><h3>Select an incident</h3><p>Choose an incident to calculate its dependency blast radius.</p></div> : <>
+                  <div className="incident-detail-header"><div><span className="page-eyebrow">INCIDENT</span><h2>{selectedIncident.title}</h2><p>{selectedIncident.description || "No incident description provided."}</p></div><div className="incident-detail-actions"><button className="secondary-button" onClick={() => openEditIncident(selectedIncident)}>Edit</button><button className="table-button danger" onClick={() => void deleteIncident(selectedIncident)}>Delete</button></div></div>
+                  <div className="incident-meta-grid"><div className="incident-meta-card"><span>Severity</span><strong className={`incident-severity ${selectedIncident.severity.toLowerCase()}`}>{selectedIncident.severity}</strong></div><div className="incident-meta-card"><span>Status</span><select value={selectedIncident.status} onChange={(e) => void updateIncidentStatus(selectedIncident, e.target.value as Incident["status"])}><option>OPEN</option><option>INVESTIGATING</option><option>RESOLVED</option></select></div><div className="incident-meta-card"><span>Affected Entity</span><strong>{selectedIncident.affectedEntity?.name ?? "Unknown entity"}</strong></div><div className="incident-meta-card"><span>Created</span><strong>{new Date(selectedIncident.createdAt).toLocaleDateString()}</strong></div></div>
+                  <div className="incident-blast-radius"><div className="section-heading-row"><div><span className="page-eyebrow">BLAST RADIUS</span><h3>Potentially Affected Systems</h3></div>{impact && <strong>{impact.totalAffected} affected</strong>}</div>{impactLoading ? <div className="team-loading"><div className="small-loader" /> Calculating dependency blast radius...</div> : impactError ? <div className="page-error">{impactError}</div> : impact ? <><div className="impact-overview"><div className="impact-metric"><strong>{impact.totalAffected}</strong><span>Affected</span></div><div className="impact-metric"><strong>{impact.affectedEntities.filter((e) => e.depth === 1).length}</strong><span>Direct</span></div><div className="impact-metric"><strong>{impact.affectedEntities.length ? Math.max(...impact.affectedEntities.map((e) => e.depth)) : 0}</strong><span>Max Depth</span></div></div><div className="affected-section">{impact.totalAffected === 0 ? <div className="no-impact"><strong>No downstream impact detected</strong><p>No dependent entities were found.</p></div> : impact.affectedEntities.map((entity) => <button className="affected-item" key={entity.id} onClick={() => handleAffectedEntityClick(entity.id)}><div className="affected-main"><strong>{entity.name}</strong><span>{entity.entityType}</span></div><div className="depth-badge">Depth {entity.depth}</div></button>)}</div></> : <div className="empty-management"><p>Select the incident to calculate impact.</p></div>}</div>
+                </>}
+              </section>
+            </div>
+          </section>
+        ) : activeView === "simulation" ? (
+          <section className="simulation-page">
+            <div className="page-header">
+              <div>
+                <span className="page-eyebrow">WHAT-IF ANALYSIS</span>
+                <h2>Change Simulation</h2>
+                <p>
+                  Select a system to automatically simulate a change or outage and see
+                  which downstream systems could be affected.
+                </p>
+              </div>
+            </div>
+
+            <div className="simulation-layout">
+              <section className="simulation-control-panel">
+                <div className="section-heading-row">
+                  <div>
+                    <span className="page-eyebrow">SIMULATION INPUT</span>
+                    <h3>Choose a system</h3>
+                  </div>
+                </div>
+
+                <div className="simulation-entity-picker">
+                  <div className="simulation-picker-header">
+                    <span>Choose a system</span>
+                    <div className="simulation-picker-actions">
+                      {simulationOverviewLoading && (
+                        <span className="simulation-overview-loading">
+                          Calculating risk...
+                        </span>
+                      )}
+
+                      <select
+                        className="simulation-criticality-filter"
+                        value={simulationCriticalityFilter}
+                        onChange={(event) =>
+                          setSimulationCriticalityFilter(
+                            event.target.value as
+                              | "ALL"
+                              | "LOW"
+                              | "MEDIUM"
+                              | "HIGH"
+                              | "CRITICAL",
+                          )
+                        }
+                        aria-label="Filter entities by criticality"
+                      >
+                        <option value="ALL">All Criticality</option>
+                        <option value="LOW">Low</option>
+                        <option value="MEDIUM">Medium</option>
+                        <option value="HIGH">High</option>
+                        <option value="CRITICAL">Critical</option>
+                      </select>
+                    </div>
+                  </div>
+
+                  {filteredSimulationEntities.length === 0 ? (
+                    <div className="simulation-empty-filter">
+                      <strong>No entities found</strong>
+                      <p>
+                        There are no entities with {simulationCriticalityFilter.toLowerCase()}
+                        criticality.
+                      </p>
+                    </div>
+                  ) : (
+                    <div className="simulation-entity-grid">
+                      {filteredSimulationEntities.map((entity) => {
+                      const risk = simulationRiskMap[entity.id];
+                      const isSelected = simulationEntityId === entity.id;
+
+                      return (
+                        <button
+                          key={entity.id}
+                          type="button"
+                          className={`simulation-entity-card ${
+                            isSelected ? "selected" : ""
+                          } ${risk ? risk.level.toLowerCase() : "unknown"}`}
+                          onClick={() => selectSimulationEntity(entity.id)}
+                        >
+                          <div className="simulation-entity-card-top">
+                            <span className="simulation-entity-icon">
+                              {entity.entityType.slice(0, 2)}
+                            </span>
+
+                            {risk ? (
+                              <span
+                                className={`simulation-risk-dot ${risk.level.toLowerCase()}`}
+                                title={`${risk.level} risk — ${risk.score}/100`}
+                              />
+                            ) : (
+                              <span className="simulation-risk-dot loading" />
+                            )}
+                          </div>
+
+                          <strong>{entity.name}</strong>
+                          <span className="simulation-entity-type">
+                            {entity.entityType}
+                          </span>
+
+                          <div className="simulation-entity-risk">
+                            {risk ? (
+                              <>
+                                <span>{risk.level}</span>
+                                <small>{risk.score}/100</small>
+                              </>
+                            ) : (
+                              <span>Calculating...</span>
+                            )}
+                          </div>
+                        </button>
+                      );
+                      })}
+                    </div>
+                  )}
+                </div>
+
+                <div className="simulation-explanation">
+                  <strong>What will happen?</strong>
+                  <p>
+                    Select any system above. OrgImpact automatically
+                    traverses its dependency graph and estimates the systems
+                    that could be affected by a change or outage.
+                  </p>
+                </div>
+
+                {simulationError && (
+                  <div className="form-error">{simulationError}</div>
+                )}
+
+                {simulationLoading && (
+                  <div className="simulation-loading">
+                    Analyzing dependency impact...
+                  </div>
+                )}
+              </section>
+
+              <section className="simulation-result-panel">
+                {!simulationResult ? (
+                  <div className="empty-management detail-empty">
+                    <div className="empty-management-icon">↗</div>
+                    <h3>No simulation yet</h3>
+                    <p>
+                      Select an entity to automatically calculate its potential blast radius
+                      and risk level.
+                    </p>
+                  </div>
+                ) : (
+                  <>
+                    <div className="simulation-result-header">
+                      <div>
+                        <span className="page-eyebrow">SIMULATION RESULT</span>
+                        <h2>{simulationResult.rootEntity.name}</h2>
+                        <p>Hypothetical change / outage impact analysis</p>
+                      </div>
+
+                      <div
+                        className={`risk-badge ${simulationResult.riskLevel.toLowerCase()}`}
+                      >
+                        {simulationResult.riskLevel}
+                      </div>
+                    </div>
+
+                    <div className="simulation-metrics">
+                      <div className="simulation-metric">
+                        <span>Risk Score</span>
+                        <strong>
+                          {simulationResult.riskScore}
+                          <small>/100</small>
+                        </strong>
+                      </div>
+
+                      <div className="simulation-metric">
+                        <span>Affected Systems</span>
+                        <strong>{simulationResult.totalAffected}</strong>
+                      </div>
+
+                      <div className="simulation-metric">
+                        <span>Direct Impact</span>
+                        <strong>
+                          {
+                            simulationResult.affectedEntities.filter(
+                              (entity) => entity.depth === 1,
+                            ).length
+                          }
+                        </strong>
+                      </div>
+
+                      <div className="simulation-metric">
+                        <span>Max Depth</span>
+                        <strong>
+                          {simulationResult.affectedEntities.length > 0
+                            ? Math.max(
+                                ...simulationResult.affectedEntities.map(
+                                  (entity) => entity.depth,
+                                ),
+                              )
+                            : 0}
+                        </strong>
+                      </div>
+                    </div>
+
+                    <div className="simulation-impact-section">
+                      <div className="section-heading-row">
+                        <div>
+                          <span className="page-eyebrow">BLAST RADIUS</span>
+                          <h3>Potentially Affected Systems</h3>
+                        </div>
+                      </div>
+
+                      {simulationResult.totalAffected === 0 ? (
+                        <div className="no-impact">
+                          <strong>No downstream impact detected</strong>
+                          <p>No dependent entities were found for this change.</p>
+                        </div>
+                      ) : (
+                        <div className="simulation-impact-list">
+                          {simulationResult.affectedEntities.map((entity) => (
+                            <button
+                              className="affected-item"
+                              key={entity.id}
+                              onClick={() =>
+                                handleAffectedEntityClick(entity.id)
+                              }
+                            >
+                              <div className="affected-main">
+                                <strong>{entity.name}</strong>
+                                <span>{entity.entityType}</span>
+                              </div>
+                              <div className="depth-badge">
+                                Depth {entity.depth}
+                              </div>
+                            </button>
+                          ))}
+                        </div>
+                      )}
+                    </div>
+
+                    <div className="simulation-warning">
+                      <strong>Simulation only</strong>
+                      <span>
+                        This analysis does not modify your graph or production
+                        systems. It estimates impact using the dependency
+                        relationships currently recorded in OrgImpact.
+                      </span>
+                    </div>
+                  </>
+                )}
+              </section>
+            </div>
+          </section>
         ) : activeView === "members" ? (
           <section className="members-page">
             <div className="page-header">
@@ -2233,6 +2894,30 @@ function App() {
                 />
               </label>
 
+              <label className="form-field">
+                <span>Criticality</span>
+
+                <select
+                  value={entityForm.criticality}
+                  disabled={entitySaving}
+                  onChange={(event) =>
+                    setEntityForm((current) => ({
+                      ...current,
+                      criticality: event.target.value as EntityForm["criticality"],
+                    }))
+                  }
+                >
+                  <option value="LOW">LOW</option>
+                  <option value="MEDIUM">MEDIUM</option>
+                  <option value="HIGH">HIGH</option>
+                  <option value="CRITICAL">CRITICAL</option>
+                </select>
+
+                <small>
+                  Defines how important this entity is to the organization.
+                </small>
+              </label>
+
               {entityError && (
                 <div className="form-error">{entityError}</div>
               )}
@@ -2424,6 +3109,22 @@ function App() {
                 {membershipSaving ? "Adding..." : "Add Member"}
               </button>
             </div>
+          </div>
+        </div>
+      )}
+
+      {incidentModalOpen && (
+        <div className="modal-backdrop" onMouseDown={closeIncidentModal}>
+          <div className="entity-modal incident-modal" onMouseDown={(event) => event.stopPropagation()}>
+            <div className="modal-header"><div><span className="page-eyebrow">{editingIncident ? "EDIT INCIDENT" : "NEW INCIDENT"}</span><h2>{editingIncident ? "Edit Incident" : "Create Incident"}</h2></div><button className="modal-close" onClick={closeIncidentModal} disabled={incidentSaving}>×</button></div>
+            <div className="modal-body">
+              <label className="form-field"><span>Title</span><input value={incidentForm.title} onChange={(e) => setIncidentForm((c) => ({...c, title: e.target.value}))} placeholder="e.g. Payment Database Failure" autoFocus /></label>
+              <label className="form-field"><span>Affected Entity</span><select value={incidentForm.affectedEntityId} disabled={Boolean(editingIncident) || incidentSaving} onChange={(e) => setIncidentForm((c) => ({...c, affectedEntityId: e.target.value}))}><option value="">Select affected entity</option>{(graph?.nodes ?? []).map((entity) => <option key={entity.id} value={entity.id}>{entity.name} — {entity.entityType}</option>)}</select></label>
+              <label className="form-field"><span>Severity</span><select value={incidentForm.severity} disabled={incidentSaving} onChange={(e) => setIncidentForm((c) => ({...c, severity: e.target.value as Incident["severity"]}))}><option value="LOW">LOW</option><option value="MEDIUM">MEDIUM</option><option value="HIGH">HIGH</option><option value="CRITICAL">CRITICAL</option></select></label>
+              <label className="form-field"><span>Description</span><textarea value={incidentForm.description} onChange={(e) => setIncidentForm((c) => ({...c, description: e.target.value}))} placeholder="Describe what happened..." rows={5} /></label>
+              {incidentError && <div className="form-error">{incidentError}</div>}
+            </div>
+            <div className="modal-footer"><button className="secondary-button" onClick={closeIncidentModal} disabled={incidentSaving}>Cancel</button><button className="primary-button" onClick={() => void saveIncident()} disabled={incidentSaving || !graph?.nodes.length}>{incidentSaving ? "Saving..." : editingIncident ? "Save Changes" : "Create Incident"}</button></div>
           </div>
         </div>
       )}
