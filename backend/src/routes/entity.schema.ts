@@ -1,14 +1,42 @@
 import { z } from "zod";
 
+const criticalitySchema = z.enum([
+  "LOW",
+  "MEDIUM",
+  "HIGH",
+  "CRITICAL",
+]);
+
 export const createEntitySchema = z.object({
-  organizationId: z.string().uuid("Invalid organization ID"),
-  entityTypeId: z.string().uuid("Invalid entity type ID"),
-  name: z.string().trim().min(1, "Entity name is required"),
-  description: z.string().trim().optional(),
+  organizationId: z.string().uuid(),
+
+  entityTypeId: z.string().uuid(),
+
+  name: z
+    .string()
+    .trim()
+    .min(2, "Entity name must contain at least 2 characters"),
+
+  description: z
+    .string()
+    .trim()
+    .optional(),
+
+  criticality: criticalitySchema.default("MEDIUM"),
 });
 
 export const updateEntitySchema = z.object({
-  entityTypeId: z.string().uuid("Invalid entity type ID").optional(),
-  name: z.string().trim().min(1, "Entity name is required").optional(),
-  description: z.string().trim().nullable().optional(),
+  name: z
+    .string()
+    .trim()
+    .min(2, "Entity name must contain at least 2 characters")
+    .optional(),
+
+  description: z
+    .string()
+    .trim()
+    .nullable()
+    .optional(),
+
+  criticality: criticalitySchema.optional(),
 });

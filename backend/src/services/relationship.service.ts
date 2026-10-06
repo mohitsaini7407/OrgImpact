@@ -1,5 +1,5 @@
 import { prisma } from "../lib/prisma.js";
-import { getIO } from "../socket.js";
+import { publishRealtimeEvent } from "../lib/realtime.js";
 
 export async function createRelationship(
   organizationId: string,
@@ -54,9 +54,11 @@ export async function createRelationship(
     },
   });
 
-  getIO()
-    .to(`organization:${organizationId}`)
-    .emit("RELATIONSHIP_CREATED", relationship);
+  await publishRealtimeEvent(
+    "RELATIONSHIP_CREATED",
+    organizationId,
+    relationship,
+  );
 
   return relationship;
 }
@@ -101,9 +103,10 @@ export async function deleteRelationship(
     where: { id: relationshipId },
   });
 
-  getIO()
-    .to(`organization:${relationship.organizationId}`)
-    .emit("RELATIONSHIP_DELETED", {
+  await publishRealtimeEvent(
+    "RELATIONSHIP_DELETED",
+    relationship.organizationId,
+    {
       id: relationship.id,
       organizationId: relationship.organizationId,
     });

@@ -10,7 +10,9 @@ type ImpactNode = {
 
 export async function analyzeImpact(entityId: string) {
   const rootEntity = await prisma.entity.findUnique({
-    where: { id: entityId },
+    where: {
+      id: entityId,
+    },
     include: {
       entityType: true,
     },

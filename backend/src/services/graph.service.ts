@@ -24,6 +24,9 @@ export async function getOrganizationGraph(organizationId: string) {
       name: entity.name,
       description: entity.description,
       entityType: entity.entityType.name,
+
+      // Add this
+      criticality: entity.criticality,
     })),
 
     edges: relationships.map((relationship) => ({

@@ -12,7 +12,7 @@ import entityRoutes from "./routes/entity.routes.js";
 import relationshipRoutes from "./routes/relationship.routes.js";
 import impactRoutes from "./routes/impact.routes.js";
 import graphRoutes from "./routes/graph.routes.js";
-
+import incidentRoutes from "./routes/incident.routes.js";
 import { errorHandler } from "./middleware/error-handler.js";
 
 const app = express();
@@ -81,6 +81,12 @@ app.use("/relationships", relationshipRoutes);
  * Impact Analysis
  */
 app.use("/impact", impactRoutes);
+
+/*
+ * Incidents
+ */
+
+app.use("/incidents", incidentRoutes);
 
 /*
  * Graph

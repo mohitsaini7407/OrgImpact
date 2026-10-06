@@ -1,10 +1,11 @@
 import { Request, Response } from "express";
+
 import {
   createEntity,
-  getOrganizationEntities,
-  getEntityById,
-  updateEntity,
   deleteEntity,
+  getEntityById,
+  getOrganizationEntities,
+  updateEntity,
 } from "../services/entity.service.js";
 
 export async function createEntityController(
@@ -16,6 +17,7 @@ export async function createEntityController(
     entityTypeId,
     name,
     description,
+    criticality,
   } = req.body;
 
   const entity = await createEntity(
@@ -23,6 +25,7 @@ export async function createEntityController(
     entityTypeId,
     name,
     description,
+    criticality,
   );
 
   res.status(201).json(entity);
@@ -34,14 +37,16 @@ export async function getOrganizationEntitiesController(
 ) {
   const organizationId = req.params.organizationId;
 
-  if (typeof organizationId !== "string") {
+  if (!organizationId || Array.isArray(organizationId)) {
     res.status(400).json({
-      error: "Invalid organizationId",
+      error: "Organization ID is required",
     });
     return;
   }
 
-  const entities = await getOrganizationEntities(organizationId);
+  const entities = await getOrganizationEntities(
+    organizationId,
+  );
 
   res.status(200).json(entities);
 }
@@ -52,9 +57,9 @@ export async function getEntityByIdController(
 ) {
   const entityId = req.params.entityId;
 
-  if (typeof entityId !== "string") {
+  if (!entityId || Array.isArray(entityId)) {
     res.status(400).json({
-      error: "Invalid entityId",
+      error: "Entity ID is required",
     });
     return;
   }
@@ -77,29 +82,17 @@ export async function updateEntityController(
 ) {
   const entityId = req.params.entityId;
 
-  if (typeof entityId !== "string") {
+  if (!entityId || Array.isArray(entityId)) {
     res.status(400).json({
-      error: "Invalid entityId",
+      error: "Entity ID is required",
     });
     return;
   }
 
-  const existingEntity = await getEntityById(entityId);
-
-  if (!existingEntity) {
-    res.status(404).json({
-      error: "Entity not found",
-    });
-    return;
-  }
-
-  const { name, description, entityTypeId } = req.body;
-
-  const entity = await updateEntity(entityId, {
-    name,
-    description,
-    entityTypeId,
-  });
+  const entity = await updateEntity(
+    entityId,
+    req.body,
+  );
 
   res.status(200).json(entity);
 }
@@ -110,23 +103,14 @@ export async function deleteEntityController(
 ) {
   const entityId = req.params.entityId;
 
-  if (typeof entityId !== "string") {
+  if (!entityId || Array.isArray(entityId)) {
     res.status(400).json({
-      error: "Invalid entityId",
+      error: "Entity ID is required",
     });
     return;
   }
 
-  const existingEntity = await getEntityById(entityId);
+  const result = await deleteEntity(entityId);
 
-  if (!existingEntity) {
-    res.status(404).json({
-      error: "Entity not found",
-    });
-    return;
-  }
-
-  await deleteEntity(entityId);
-
-  res.status(204).send();
+  res.status(200).json(result);
 }
