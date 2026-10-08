@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { socket } from "./socket";
 import {
   Background,
@@ -14,6 +14,21 @@ import {
 import "@xyflow/react/dist/style.css";
 import "./App.css";
 import Login from "./Login";
+import OrgImpactLogo from "./OrgImpactLogo";
+
+
+type NavIconName = "dashboard" | "entities" | "relationships" | "teams" | "members" | "incidents" | "simulation";
+
+function NavIcon({ name }: { name: NavIconName }) {
+  const common = { width: 21, height: 21, viewBox: "0 0 24 24", fill: "none", stroke: "currentColor", strokeWidth: 1.8, strokeLinecap: "round" as const, strokeLinejoin: "round" as const, "aria-hidden": true };
+  if (name === "dashboard") return <svg {...common}><path d="M3 11.5 12 4l9 7.5"/><path d="M5.5 10.5V20h13v-9.5"/><path d="M9.5 20v-5.5h5V20"/></svg>;
+  if (name === "entities") return <svg {...common}><path d="m12 3 8 4.5-8 4.5-8-4.5L12 3Z"/><path d="m4 12 8 4.5 8-4.5"/><path d="m4 16.5 8 4.5 8-4.5"/></svg>;
+  if (name === "relationships") return <svg {...common}><circle cx="6" cy="12" r="2.2"/><circle cx="18" cy="6" r="2.2"/><circle cx="18" cy="18" r="2.2"/><path d="m8 11 7.8-4"/><path d="m8 13 7.8 4"/></svg>;
+  if (name === "teams") return <svg {...common}><circle cx="9" cy="8" r="3"/><path d="M3.5 20c.4-3.2 2.2-5 5.5-5s5.1 1.8 5.5 5"/><path d="M16 5.5a3 3 0 0 1 0 5.7"/><path d="M17 15c2.2.3 3.6 1.8 4 4"/></svg>;
+  if (name === "members") return <svg {...common}><circle cx="12" cy="8" r="3.1"/><path d="M5 20c.5-4 2.8-6 7-6s6.5 2 7 6"/></svg>;
+  if (name === "incidents") return <svg {...common}><path d="M12 3 21 7v5c0 4.8-3.2 7.8-9 9-5.8-1.2-9-4.2-9-9V7l9-4Z"/><path d="M12 8v5"/><path d="M12 16h.01"/></svg>;
+  return <svg {...common}><path d="M4 19V5"/><path d="M4 19h16"/><path d="m7 15 4-4 3 2 5-6"/><path d="M16 7h3v3"/></svg>;
+}
 
 const API_BASE_URL = "http://localhost:5000";
 const ORGANIZATION_ID = "e9cd3e97-f509-4a60-a8c8-390f2b9dd8a6";
@@ -66,6 +81,95 @@ type Incident = {
 };
 
 type IncidentForm = { title: string; description: string; affectedEntityId: string; severity: Incident["severity"] };
+
+type IncidentStatusDropdownProps = {
+  value: Incident["status"];
+  onChange: (value: Incident["status"]) => void;
+};
+
+function IncidentStatusDropdown({
+  value,
+  onChange,
+}: IncidentStatusDropdownProps) {
+  const [open, setOpen] = useState(false);
+  const ref = useRef<HTMLDivElement | null>(null);
+
+  useEffect(() => {
+    function handlePointerDown(event: MouseEvent) {
+      if (ref.current && !ref.current.contains(event.target as Node)) {
+        setOpen(false);
+      }
+    }
+
+    document.addEventListener("mousedown", handlePointerDown);
+    return () => document.removeEventListener("mousedown", handlePointerDown);
+  }, []);
+
+  const options: Incident["status"][] = [
+    "OPEN",
+    "INVESTIGATING",
+    "RESOLVED",
+  ];
+
+  return (
+    <div className="incident-status-dropdown" ref={ref}>
+      <button
+        type="button"
+        className={`incident-status-trigger ${open ? "open" : ""}`}
+        onClick={() => setOpen((current) => !current)}
+        aria-haspopup="listbox"
+        aria-expanded={open}
+      >
+        <span className={`incident-status-indicator ${value.toLowerCase()}`} />
+        <span>{value.charAt(0) + value.slice(1).toLowerCase()}</span>
+        <svg
+          width="16"
+          height="16"
+          viewBox="0 0 24 24"
+          fill="none"
+          stroke="currentColor"
+          strokeWidth="2"
+          strokeLinecap="round"
+          strokeLinejoin="round"
+          aria-hidden="true"
+        >
+          <path d="m6 9 6 6 6-6" />
+        </svg>
+      </button>
+
+      {open && (
+        <div className="incident-status-menu" role="listbox">
+          {options.map((option) => (
+            <button
+              key={option}
+              type="button"
+              role="option"
+              aria-selected={value === option}
+              className={`incident-status-option ${
+                value === option ? "selected" : ""
+              }`}
+              onClick={() => {
+                onChange(option);
+                setOpen(false);
+              }}
+            >
+              <span
+                className={`incident-status-indicator ${option.toLowerCase()}`}
+              />
+              <span>
+                {option.charAt(0) + option.slice(1).toLowerCase()}
+              </span>
+              {value === option && (
+                <span className="incident-status-check">✓</span>
+              )}
+            </button>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
 
 type ActiveView =
   | "dashboard"
@@ -165,10 +269,20 @@ type CurrentUser = {
   id: string;
   name: string;
   email: string;
+  memberships?: Array<{
+    id: string;
+    role: string;
+    organizationId: string;
+    organization?: {
+      id: string;
+      name: string;
+      slug: string;
+    };
+  }>;
 };
 
 type MembershipForm = {
-  userId: string;
+  email: string;
   role: string;
 };
 
@@ -183,7 +297,7 @@ const emptyTeamMemberForm: TeamMemberForm = {
 };
 
 const emptyMembershipForm: MembershipForm = {
-  userId: "",
+  email: "",
   role: "MEMBER",
 };
 
@@ -251,6 +365,7 @@ function App() {
   const [teamForm, setTeamForm] = useState<TeamForm>(emptyTeamForm);
   const [teamSaving, setTeamSaving] = useState(false);
   const [memberModalOpen, setMemberModalOpen] = useState(false);
+  const [editingTeamMember, setEditingTeamMember] = useState<TeamMember | null>(null);
   const [memberForm, setMemberForm] = useState<TeamMemberForm>(emptyTeamMemberForm);
   const [memberSaving, setMemberSaving] = useState(false);
   const [users, setUsers] = useState<UserSummary[]>([]);
@@ -260,9 +375,23 @@ function App() {
   const [membersLoading, setMembersLoading] = useState(false);
   const [membersError, setMembersError] = useState("");
   const [currentUser, setCurrentUser] = useState<CurrentUser | null>(null);
+  const [profileMenuOpen, setProfileMenuOpen] = useState(false);
+  const [simulationFilterOpen, setSimulationFilterOpen] = useState(false);
+  const [confirmDialog, setConfirmDialog] = useState<{
+    title: string;
+    message: string;
+    confirmLabel: string;
+    onConfirm: () => void;
+  } | null>(null);
+  const profileMenuRef = useRef<HTMLDivElement | null>(null);
+  const simulationFilterRef = useRef<HTMLDivElement | null>(null);
   const [membershipModalOpen, setMembershipModalOpen] = useState(false);
+  const [membershipEditOpen, setMembershipEditOpen] = useState(false);
+  const [editingMembership, setEditingMembership] = useState<OrganizationMember | null>(null);
+  const [membershipEditRole, setMembershipEditRole] = useState("MEMBER");
   const [membershipForm, setMembershipForm] = useState<MembershipForm>(emptyMembershipForm);
   const [membershipSaving, setMembershipSaving] = useState(false);
+  const [invitationLink, setInvitationLink] = useState("");
 
   const [incidents, setIncidents] = useState<Incident[]>([]);
   const [incidentsLoading, setIncidentsLoading] = useState(false);
@@ -283,7 +412,7 @@ function App() {
   >({});
   const [simulationOverviewLoading, setSimulationOverviewLoading] =
     useState(false);
-  const [simulationCriticalityFilter, setSimulationCriticalityFilter] =
+  const [simulationRiskFilter, setSimulationRiskFilter] =
     useState<"ALL" | "LOW" | "MEDIUM" | "HIGH" | "CRITICAL">("ALL");
 
   useEffect(() => {
@@ -553,6 +682,7 @@ function App() {
         id: data.id,
         name: data.name,
         email: data.email,
+        memberships: data.memberships ?? [],
       });
     } catch (err) {
       console.error(err);
@@ -592,6 +722,7 @@ function App() {
 
   function openAddOrganizationMember() {
     setMembershipForm(emptyMembershipForm);
+    setInvitationLink("");
     setMembersError("");
     setMembershipModalOpen(true);
   }
@@ -599,23 +730,27 @@ function App() {
   function closeMembershipModal() {
     setMembershipModalOpen(false);
     setMembershipForm(emptyMembershipForm);
+    setInvitationLink("");
   }
 
   async function saveOrganizationMember() {
-    if (!membershipForm.userId) {
-      setMembersError("Please select a user.");
+    const email = membershipForm.email.trim().toLowerCase();
+
+    if (!email) {
+      setMembersError("Email address is required.");
       return;
     }
 
     try {
       setMembershipSaving(true);
       setMembersError("");
+      setInvitationLink("");
 
-      const response = await fetch(`${API_BASE_URL}/memberships`, {
+      const response = await fetch(`${API_BASE_URL}/invitations`, {
         method: "POST",
         headers: getAuthHeaders(),
         body: JSON.stringify({
-          userId: membershipForm.userId,
+          email,
           organizationId: ORGANIZATION_ID,
           role: membershipForm.role,
         }),
@@ -624,19 +759,97 @@ function App() {
       if (await handleUnauthorized(response)) {
         throw new Error("Authentication failed. Please login again.");
       }
+
       const data = await response.json().catch(() => null);
       if (!response.ok) {
-        throw new Error(data?.error || data?.message || `Unable to add member (${response.status})`);
+        throw new Error(data?.error || data?.message || `Unable to create invitation (${response.status})`);
       }
 
-      closeMembershipModal();
+      setInvitationLink(data.invitationUrl ?? "");
       await loadOrganizationMembers();
     } catch (err) {
       console.error(err);
-      setMembersError(err instanceof Error ? err.message : "Unable to add organization member.");
+      setMembersError(err instanceof Error ? err.message : "Unable to create invitation.");
     } finally {
       setMembershipSaving(false);
     }
+  }
+
+  function openEditOrganizationMember(member: OrganizationMember) {
+    setEditingMembership(member);
+    setMembershipEditRole(member.role);
+    setMembersError("");
+    setMembershipEditOpen(true);
+  }
+
+  function closeMembershipEdit() {
+    setMembershipEditOpen(false);
+    setEditingMembership(null);
+    setMembershipEditRole("MEMBER");
+  }
+
+  async function saveOrganizationMemberRole() {
+    if (!editingMembership) return;
+
+    try {
+      setMembershipSaving(true);
+      setMembersError("");
+      const response = await fetch(`${API_BASE_URL}/memberships/${editingMembership.id}`, {
+        method: "PATCH",
+        headers: getAuthHeaders(),
+        body: JSON.stringify({ role: membershipEditRole }),
+      });
+
+      if (await handleUnauthorized(response)) {
+        throw new Error("Authentication failed. Please login again.");
+      }
+
+      const data = await response.json().catch(() => null);
+      if (!response.ok) {
+        throw new Error(data?.error || data?.message || `Unable to update member role (${response.status})`);
+      }
+
+      closeMembershipEdit();
+      await loadOrganizationMembers();
+      await loadCurrentUser();
+    } catch (err) {
+      console.error(err);
+      setMembersError(err instanceof Error ? err.message : "Unable to update member role.");
+    } finally {
+      setMembershipSaving(false);
+    }
+  }
+
+  async function removeOrganizationMember(member: OrganizationMember) {
+    setConfirmDialog({
+      title: "Remove organization member?",
+      message: `${member.user?.name ?? "This user"} will lose access to this organization.`,
+      confirmLabel: "Remove",
+      onConfirm: () => {
+        void (async () => {
+          try {
+            setMembersError("");
+            const response = await fetch(`${API_BASE_URL}/memberships/${member.id}`, {
+              method: "DELETE",
+              headers: getAuthHeaders(),
+            });
+            if (await handleUnauthorized(response)) {
+              throw new Error("Authentication failed. Please login again.");
+            }
+            const data = await response.json().catch(() => null);
+            if (!response.ok) {
+              throw new Error(data?.error || data?.message || `Unable to remove member (${response.status})`);
+            }
+            setConfirmDialog(null);
+            await loadOrganizationMembers();
+          } catch (err) {
+            console.error(err);
+            setConfirmDialog(null);
+            setMembersError(err instanceof Error ? err.message : "Unable to remove organization member.");
+          }
+        })();
+      },
+    });
   }
 
   async function loadUsers() {
@@ -1141,6 +1354,7 @@ function App() {
       setImpact(null);
       setFocusedEntityId(null);
       await loadGraph();
+      setConfirmDialog(null);
     } catch (err) {
       console.error(err);
       setEntityError(
@@ -1154,14 +1368,15 @@ function App() {
   }
 
   async function deleteEntity(entity: GraphNode) {
-    const confirmed = window.confirm(
-      `Delete "${entity.name}"? Any relationships connected to this entity will also be removed by the database.`,
-    );
+    setConfirmDialog({
+      title: "Delete entity?",
+      message: `Delete "${entity.name}"? Any relationships connected to this entity will also be removed by the database.`,
+      confirmLabel: "Delete entity",
+      onConfirm: () => { void performDeleteEntity(entity); },
+    });
+  }
 
-    if (!confirmed) {
-      return;
-    }
-
+  async function performDeleteEntity(entity: GraphNode) {
     try {
       setEntityError("");
 
@@ -1193,7 +1408,8 @@ function App() {
         setFocusedEntityId(null);
       }
 
-      // await loadGraph(); //it was not working properly, so I commented it out. The graph will be updated via socket events anyway.
+      setConfirmDialog(null);
+      // await loadGraph(); // graph updates through socket events.
     } catch (err) {
       console.error(err);
       setEntityError(
@@ -1272,6 +1488,7 @@ function App() {
       setRelationshipModalOpen(false);
       setRelationshipForm(emptyRelationshipForm);
       setRelationshipError("");
+      setConfirmDialog(null);
       // await loadGraph();
     } catch (err) {
       console.error(err);
@@ -1301,14 +1518,15 @@ function App() {
       (node) => node.id === relationship.target,
     );
 
-    const confirmed = window.confirm(
-      `Delete ${source?.name ?? "source"} → ${relationship.relationshipType} → ${target?.name ?? "target"}?`,
-    );
+    setConfirmDialog({
+      title: "Delete relationship?",
+      message: `Delete ${source?.name ?? "source"} → ${relationship.relationshipType} → ${target?.name ?? "target"}?`,
+      confirmLabel: "Delete relationship",
+      onConfirm: () => { void performDeleteRelationship(relationshipId); },
+    });
+  }
 
-    if (!confirmed) {
-      return;
-    }
-
+  async function performDeleteRelationship(relationshipId: string) {
     try {
       setRelationshipError("");
 
@@ -1407,7 +1625,15 @@ function App() {
   }
 
   async function deleteIncident(incident: Incident) {
-    if (!window.confirm(`Delete incident "${incident.title}"?`)) return;
+    setConfirmDialog({
+      title: "Delete incident?",
+      message: `Delete incident "${incident.title}"? This action cannot be undone.`,
+      confirmLabel: "Delete incident",
+      onConfirm: () => { void performDeleteIncident(incident); },
+    });
+  }
+
+  async function performDeleteIncident(incident: Incident) {
     try {
       setIncidentError("");
       const response = await fetch(`${API_BASE_URL}/incidents/${incident.id}`, { method: "DELETE", headers: getAuthHeaders() });
@@ -1416,6 +1642,7 @@ function App() {
       if (!response.ok) throw new Error(data?.error || data?.message || "Unable to delete incident.");
       setIncidents((current) => current.filter((item) => item.id !== incident.id));
       if (selectedIncident?.id === incident.id) { setSelectedIncident(null); setSelectedEntity(null); setImpact(null); setFocusedEntityId(null); }
+      setConfirmDialog(null);
     } catch (err) { setIncidentError(err instanceof Error ? err.message : "Unable to delete incident."); }
   }
 
@@ -1465,14 +1692,14 @@ function App() {
   const filteredSimulationEntities = useMemo(() => {
     const entities = graph?.nodes ?? [];
 
-    if (simulationCriticalityFilter === "ALL") {
+    if (simulationRiskFilter === "ALL") {
       return entities;
     }
 
     return entities.filter(
-      (entity) => entity.criticality === simulationCriticalityFilter,
+      (entity) => simulationRiskMap[entity.id]?.level === simulationRiskFilter,
     );
-  }, [graph, simulationCriticalityFilter]);
+  }, [graph, simulationRiskFilter, simulationRiskMap]);
 
   async function loadSimulationRiskOverview() {
     if (!graph?.nodes?.length) {
@@ -1627,6 +1854,23 @@ function App() {
     }
   }
 
+  useEffect(() => {
+    function handleDocumentPointerDown(event: MouseEvent) {
+      const target = event.target as Node;
+
+      if (profileMenuRef.current && !profileMenuRef.current.contains(target)) {
+        setProfileMenuOpen(false);
+      }
+
+      if (simulationFilterRef.current && !simulationFilterRef.current.contains(target)) {
+        setSimulationFilterOpen(false);
+      }
+    }
+
+    document.addEventListener("mousedown", handleDocumentPointerDown);
+    return () => document.removeEventListener("mousedown", handleDocumentPointerDown);
+  }, []);
+
   function selectSimulationEntity(entityId: string) {
     setSimulationEntityId(entityId);
     setSimulationResult(null);
@@ -1704,13 +1948,22 @@ function App() {
 
   function openAddMember() {
     if (!selectedTeam) return;
+    setEditingTeamMember(null);
     setMemberForm(emptyTeamMemberForm);
+    setTeamError("");
+    setMemberModalOpen(true);
+  }
+
+  function openEditTeamMember(member: TeamMember) {
+    setEditingTeamMember(member);
+    setMemberForm({ userId: member.userId, role: member.role });
     setTeamError("");
     setMemberModalOpen(true);
   }
 
   function closeMemberModal() {
     setMemberModalOpen(false);
+    setEditingTeamMember(null);
     setMemberForm(emptyTeamMemberForm);
   }
 
@@ -1725,15 +1978,24 @@ function App() {
       setMemberSaving(true);
       setTeamError("");
 
-      const response = await fetch(`${API_BASE_URL}/team-members`, {
-        method: "POST",
-        headers: getAuthHeaders(),
-        body: JSON.stringify({
-          teamId: selectedTeam.id,
-          userId: memberForm.userId,
-          role: memberForm.role,
-        }),
-      });
+      const response = await fetch(
+        editingTeamMember
+          ? `${API_BASE_URL}/team-members/${editingTeamMember.id}`
+          : `${API_BASE_URL}/team-members`,
+        {
+          method: editingTeamMember ? "PATCH" : "POST",
+          headers: getAuthHeaders(),
+          body: JSON.stringify(
+            editingTeamMember
+              ? { role: memberForm.role }
+              : {
+                  teamId: selectedTeam.id,
+                  userId: memberForm.userId,
+                  role: memberForm.role,
+                },
+          ),
+        },
+      );
 
       if (await handleUnauthorized(response)) {
         throw new Error("Authentication failed. Please login again.");
@@ -1741,17 +2003,59 @@ function App() {
 
       const data = await response.json().catch(() => null);
       if (!response.ok) {
-        throw new Error(data?.error || data?.message || `Unable to add team member (${response.status})`);
+        throw new Error(
+          data?.error ||
+            data?.message ||
+            `Unable to ${editingTeamMember ? "update" : "add"} team member (${response.status})`,
+        );
       }
 
       closeMemberModal();
       await loadTeamMembers(selectedTeam.id);
     } catch (err) {
       console.error(err);
-      setTeamError(err instanceof Error ? err.message : "Unable to add team member.");
+      setTeamError(
+        err instanceof Error
+          ? err.message
+          : `Unable to ${editingTeamMember ? "update" : "add"} team member.`,
+      );
     } finally {
       setMemberSaving(false);
     }
+  }
+
+  async function removeTeamMember(member: TeamMember) {
+    if (!selectedTeam) return;
+
+    setConfirmDialog({
+      title: "Remove team member?",
+      message: `${member.user?.name ?? "This user"} will be removed from ${selectedTeam.name}.`,
+      confirmLabel: "Remove",
+      onConfirm: () => {
+        void (async () => {
+          try {
+            setTeamError("");
+            const response = await fetch(`${API_BASE_URL}/team-members/${member.id}`, {
+              method: "DELETE",
+              headers: getAuthHeaders(),
+            });
+            if (await handleUnauthorized(response)) {
+              throw new Error("Authentication failed. Please login again.");
+            }
+            const data = await response.json().catch(() => null);
+            if (!response.ok) {
+              throw new Error(data?.error || data?.message || `Unable to remove team member (${response.status})`);
+            }
+            setConfirmDialog(null);
+            await loadTeamMembers(selectedTeam.id);
+          } catch (err) {
+            console.error(err);
+            setConfirmDialog(null);
+            setTeamError(err instanceof Error ? err.message : "Unable to remove team member.");
+          }
+        })();
+      },
+    });
   }
 
   function selectTeam(team: Team) {
@@ -1777,6 +2081,22 @@ function App() {
     );
   }, [graph, entitySearch]);
 
+  const currentOrganizationRole =
+    organizationMembers.find((member) => member.userId === currentUser?.id)?.role ?? "";
+  const currentTeamMemberRole =
+    teamMembers.find((member) => member.userId === currentUser?.id)?.role ?? "";
+  const canManageSelectedTeam =
+    ["OWNER", "ADMIN"].includes(currentOrganizationRole) || currentTeamMemberRole === "LEAD";
+  const canEditOrganizationMember = (member: OrganizationMember) =>
+    currentUser?.id !== member.userId &&
+    (currentOrganizationRole === "OWNER" ||
+      (currentOrganizationRole === "ADMIN" && member.role === "MEMBER"));
+  const canEditTeamMember = (member: TeamMember) =>
+    currentUser?.id !== member.userId &&
+    (currentOrganizationRole === "OWNER" ||
+      currentOrganizationRole === "ADMIN" ||
+      (currentTeamMemberRole === "LEAD" && member.role === "MEMBER"));
+
   if (!token) {
     return <Login onLogin={handleLogin} />;
   }
@@ -1784,92 +2104,139 @@ function App() {
   return (
     <div className="app">
       <header className="header">
-        <div>
-          <h1>OrgImpact</h1>
-          <p>Organizational dependency intelligence</p>
-        </div>
-
-        <div className="header-actions">
-          <nav className="main-nav">
-            <button
-              className={
-                activeView === "dashboard"
-                  ? "nav-button active"
-                  : "nav-button"
-              }
-              onClick={() => setActiveView("dashboard")}
-            >
-              Dashboard
-            </button>
-
-            <button
-              className={
-                activeView === "entities"
-                  ? "nav-button active"
-                  : "nav-button"
-              }
-              onClick={() => setActiveView("entities")}
-            >
-              Entities
-            </button>
-
-            <button
-              className={
-                activeView === "relationships"
-                  ? "nav-button active"
-                  : "nav-button"
-              }
-              onClick={() => setActiveView("relationships")}
-            >
-              Relationships
-            </button>
-
-
-            <button
-              className={
-                activeView === "teams"
-                  ? "nav-button active"
-                  : "nav-button"
-              }
-              onClick={() => setActiveView("teams")}
-            >
-              Teams
-            </button>
-
-
-            <button
-              className={
-                activeView === "members"
-                  ? "nav-button active"
-                  : "nav-button"
-              }
-              onClick={() => setActiveView("members")}
-            >
-              Members
-            </button>
-            <button
-              className={activeView === "incidents" ? "nav-button active" : "nav-button"}
-              onClick={() => setActiveView("incidents")}
-            >
-              Incidents
-            </button>
-
-            <button
-              className={activeView === "simulation" ? "nav-button active" : "nav-button"}
-              onClick={() => setActiveView("simulation")}
-            >
-              Simulate Change
-            </button>
-          </nav>
-
-          <div className="status">
-            <span className="status-dot" />
-            <span>{error ? "Graph Error" : "Graph Connected"}</span>
+        <button
+          type="button"
+          className="header-brand-button"
+          onClick={() => {
+            setActiveView("dashboard");
+            setProfileMenuOpen(false);
+          }}
+          aria-label="Go to OrgImpact dashboard"
+        >
+          <div className="header-brand">
+            <OrgImpactLogo />
           </div>
+        </button>
 
-          <button className="logout-button" onClick={handleLogout}>
-            Logout
+        <nav className="main-nav" aria-label="Primary navigation">
+          {[
+            ["dashboard", "Dashboard", "dashboard"],
+            ["entities", "Entities", "entities"],
+            ["relationships", "Relationships", "relationships"],
+            ["teams", "Teams", "teams"],
+            ["members", "Members", "members"],
+            ["incidents", "Incidents", "incidents"],
+            ["simulation", "Simulation", "simulation"],
+          ].map(([key, label, icon]) => (
+            <button
+              key={key}
+              type="button"
+              className={`nav-item ${activeView === key ? "active" : ""}`}
+              onClick={() => {
+                setActiveView(key as typeof activeView);
+                setProfileMenuOpen(false);
+              }}
+              aria-current={activeView === key ? "page" : undefined}
+            >
+              <span className="nav-item-icon">
+                <NavIcon name={icon as NavIconName} />
+              </span>
+              <span className="nav-item-label">{label}</span>
+            </button>
+          ))}
+        </nav>
+
+        <div className="header-account" ref={profileMenuRef}>
+          <div className="header-divider" />
+          <button
+            type="button"
+            className={`account-chip ${profileMenuOpen ? "open" : ""}`}
+            onClick={() => setProfileMenuOpen((open) => !open)}
+            aria-expanded={profileMenuOpen}
+            aria-haspopup="menu"
+          >
+            <span className="account-avatar">
+              {(currentUser?.name || "U").trim().charAt(0).toUpperCase()}
+            </span>
+            <span className="account-name">{currentUser?.name || "User"}</span>
+            <svg className="account-chevron" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+              <path d="m6 9 6 6 6-6" />
+            </svg>
           </button>
+
+          {profileMenuOpen && (
+            <div className="profile-menu" role="menu">
+              <div className="profile-menu-header">
+                <div className="profile-menu-avatar">
+                  {(currentUser?.name || "U").trim().charAt(0).toUpperCase()}
+                </div>
+                <div className="profile-menu-identity">
+                  <strong>{currentUser?.name || "User"}</strong>
+                  <span>{currentUser?.email || "No email available"}</span>
+                </div>
+              </div>
+
+              <div className="profile-menu-section">
+                <span className="profile-menu-label">CURRENT ACCOUNT</span>
+                <div className="profile-account-row">
+                  <div>
+                    <strong>{currentUser?.name || "User"}</strong>
+                    <span>{currentUser?.email || ""}</span>
+                  </div>
+                  <span className="profile-current-badge">Current</span>
+                </div>
+              </div>
+
+              <div className="profile-menu-section">
+                <span className="profile-menu-label">WORKSPACES</span>
+                {(currentUser?.memberships ?? []).map((membership) => (
+                  <button
+                    type="button"
+                    className={`profile-workspace ${membership.organizationId === ORGANIZATION_ID ? "current" : ""}`}
+                    key={membership.id}
+                    onClick={() => {
+                      setActiveView("dashboard");
+                      setProfileMenuOpen(false);
+                    }}
+                  >
+                    <span className="workspace-dot" />
+                    <span className="profile-workspace-copy">
+                      <strong>{membership.organization?.name || "Organization"}</strong>
+                      <small>{membership.role}</small>
+                    </span>
+                    {membership.organizationId === ORGANIZATION_ID && (
+                      <span className="profile-check">✓</span>
+                    )}
+                  </button>
+                ))}
+              </div>
+
+              <div className="profile-menu-footer">
+                <button
+                  type="button"
+                  className="profile-action secondary"
+                  onClick={() => {
+                    setProfileMenuOpen(false);
+                    handleLogout();
+                  }}
+                >
+                  <span className="profile-action-icon">⇄</span>
+                  <span>Switch account</span>
+                </button>
+                <button
+                  type="button"
+                  className="profile-action danger"
+                  onClick={() => {
+                    setProfileMenuOpen(false);
+                    handleLogout();
+                  }}
+                >
+                  <span className="profile-action-icon">↪</span>
+                  <span>Sign out</span>
+                </button>
+              </div>
+            </div>
+          )}
         </div>
       </header>
 
@@ -2348,7 +2715,12 @@ function App() {
               <section className="incident-detail-panel">
                 {!selectedIncident ? <div className="empty-management detail-empty"><div className="empty-management-icon">!</div><h3>Select an incident</h3><p>Choose an incident to calculate its dependency blast radius.</p></div> : <>
                   <div className="incident-detail-header"><div><span className="page-eyebrow">INCIDENT</span><h2>{selectedIncident.title}</h2><p>{selectedIncident.description || "No incident description provided."}</p></div><div className="incident-detail-actions"><button className="secondary-button" onClick={() => openEditIncident(selectedIncident)}>Edit</button><button className="table-button danger" onClick={() => void deleteIncident(selectedIncident)}>Delete</button></div></div>
-                  <div className="incident-meta-grid"><div className="incident-meta-card"><span>Severity</span><strong className={`incident-severity ${selectedIncident.severity.toLowerCase()}`}>{selectedIncident.severity}</strong></div><div className="incident-meta-card"><span>Status</span><select value={selectedIncident.status} onChange={(e) => void updateIncidentStatus(selectedIncident, e.target.value as Incident["status"])}><option>OPEN</option><option>INVESTIGATING</option><option>RESOLVED</option></select></div><div className="incident-meta-card"><span>Affected Entity</span><strong>{selectedIncident.affectedEntity?.name ?? "Unknown entity"}</strong></div><div className="incident-meta-card"><span>Created</span><strong>{new Date(selectedIncident.createdAt).toLocaleDateString()}</strong></div></div>
+                  <div className="incident-meta-grid"><div className="incident-meta-card"><span>Severity</span><strong className={`incident-severity ${selectedIncident.severity.toLowerCase()}`}>{selectedIncident.severity}</strong></div><div className="incident-meta-card"><span>Status</span><IncidentStatusDropdown
+                        value={selectedIncident.status}
+                        onChange={(status) =>
+                          void updateIncidentStatus(selectedIncident, status)
+                        }
+                      /></div><div className="incident-meta-card"><span>Affected Entity</span><strong>{selectedIncident.affectedEntity?.name ?? "Unknown entity"}</strong></div><div className="incident-meta-card"><span>Created</span><strong>{new Date(selectedIncident.createdAt).toLocaleDateString()}</strong></div></div>
                   <div className="incident-blast-radius"><div className="section-heading-row"><div><span className="page-eyebrow">BLAST RADIUS</span><h3>Potentially Affected Systems</h3></div>{impact && <strong>{impact.totalAffected} affected</strong>}</div>{impactLoading ? <div className="team-loading"><div className="small-loader" /> Calculating dependency blast radius...</div> : impactError ? <div className="page-error">{impactError}</div> : impact ? <><div className="impact-overview"><div className="impact-metric"><strong>{impact.totalAffected}</strong><span>Affected</span></div><div className="impact-metric"><strong>{impact.affectedEntities.filter((e) => e.depth === 1).length}</strong><span>Direct</span></div><div className="impact-metric"><strong>{impact.affectedEntities.length ? Math.max(...impact.affectedEntities.map((e) => e.depth)) : 0}</strong><span>Max Depth</span></div></div><div className="affected-section">{impact.totalAffected === 0 ? <div className="no-impact"><strong>No downstream impact detected</strong><p>No dependent entities were found.</p></div> : impact.affectedEntities.map((entity) => <button className="affected-item" key={entity.id} onClick={() => handleAffectedEntityClick(entity.id)}><div className="affected-main"><strong>{entity.name}</strong><span>{entity.entityType}</span></div><div className="depth-badge">Depth {entity.depth}</div></button>)}</div></> : <div className="empty-management"><p>Select the incident to calculate impact.</p></div>}</div>
                 </>}
               </section>
@@ -2386,27 +2758,47 @@ function App() {
                         </span>
                       )}
 
-                      <select
-                        className="simulation-criticality-filter"
-                        value={simulationCriticalityFilter}
-                        onChange={(event) =>
-                          setSimulationCriticalityFilter(
-                            event.target.value as
-                              | "ALL"
-                              | "LOW"
-                              | "MEDIUM"
-                              | "HIGH"
-                              | "CRITICAL",
-                          )
-                        }
-                        aria-label="Filter entities by criticality"
-                      >
-                        <option value="ALL">All Criticality</option>
-                        <option value="LOW">Low</option>
-                        <option value="MEDIUM">Medium</option>
-                        <option value="HIGH">High</option>
-                        <option value="CRITICAL">Critical</option>
-                      </select>
+                      <div className="simulation-filter-dropdown" ref={simulationFilterRef}>
+                        <button
+                          type="button"
+                          className={`simulation-filter-trigger ${simulationFilterOpen ? "open" : ""}`}
+                          onClick={() => setSimulationFilterOpen((open) => !open)}
+                          aria-haspopup="listbox"
+                          aria-expanded={simulationFilterOpen}
+                        >
+                          <span className={`filter-dot ${simulationRiskFilter.toLowerCase()}`} />
+                          <span>
+                            {simulationRiskFilter === "ALL"
+                              ? "All Risk Levels"
+                              : simulationRiskFilter.charAt(0) + simulationRiskFilter.slice(1).toLowerCase()}
+                          </span>
+                          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+                            <path d="m6 9 6 6 6-6" />
+                          </svg>
+                        </button>
+
+                        {simulationFilterOpen && (
+                          <div className="simulation-filter-menu" role="listbox">
+                            {["ALL", "LOW", "MEDIUM", "HIGH", "CRITICAL"].map((level) => (
+                              <button
+                                key={level}
+                                type="button"
+                                role="option"
+                                aria-selected={simulationRiskFilter === level}
+                                className={`simulation-filter-option ${simulationRiskFilter === level ? "selected" : ""}`}
+                                onClick={() => {
+                                  setSimulationRiskFilter(level as typeof simulationRiskFilter);
+                                  setSimulationFilterOpen(false);
+                                }}
+                              >
+                                <span className={`filter-dot ${level.toLowerCase()}`} />
+                                <span>{level === "ALL" ? "All Risk Levels" : level.charAt(0) + level.slice(1).toLowerCase()}</span>
+                                {simulationRiskFilter === level && <span className="filter-check">✓</span>}
+                              </button>
+                            ))}
+                          </div>
+                        )}
+                      </div>
                     </div>
                   </div>
 
@@ -2414,8 +2806,8 @@ function App() {
                     <div className="simulation-empty-filter">
                       <strong>No entities found</strong>
                       <p>
-                        There are no entities with {simulationCriticalityFilter.toLowerCase()}
-                        criticality.
+                        There are no entities with {simulationRiskFilter.toLowerCase()}
+                        risk level.
                       </p>
                     </div>
                   ) : (
@@ -2682,6 +3074,12 @@ function App() {
                       <span className="member-since">
                         {member.createdAt ? new Date(member.createdAt).toLocaleDateString() : ""}
                       </span>
+                      {canEditOrganizationMember(member) && (
+                        <div className="member-row-actions">
+                          <button type="button" className="table-button" onClick={() => openEditOrganizationMember(member)}>Edit role</button>
+                          <button type="button" className="table-button danger" onClick={() => void removeOrganizationMember(member)}>Remove</button>
+                        </div>
+                      )}
                     </div>
                   ))}
                 </div>
@@ -2795,6 +3193,12 @@ function App() {
                               <span>{member.user?.email ?? "Member"}</span>
                             </div>
                             <span className="role-badge">{member.role}</span>
+                            {canEditTeamMember(member) && (
+                              <div className="member-row-actions">
+                                <button type="button" className="table-button" onClick={() => openEditTeamMember(member)}>Edit role</button>
+                                <button type="button" className="table-button danger" onClick={() => void removeTeamMember(member)}>Remove</button>
+                              </div>
+                            )}
                           </div>
                         ))}
                       </div>
@@ -3005,7 +3409,7 @@ function App() {
             <div className="modal-header">
               <div>
                 <span className="page-eyebrow">TEAM MEMBERSHIP</span>
-                <h2>Add Member</h2>
+                <h2>{editingTeamMember ? "Edit Team Role" : "Add Member"}</h2>
               </div>
               <button className="modal-close" onClick={closeMemberModal} disabled={memberSaving}>×</button>
             </div>
@@ -3015,10 +3419,15 @@ function App() {
                 <span>User</span>
                 <select
                   value={memberForm.userId}
-                  disabled={memberSaving || usersLoading}
+                  disabled={Boolean(editingTeamMember) || memberSaving || usersLoading}
                   onChange={(event) => setMemberForm((current) => ({ ...current, userId: event.target.value }))}
                 >
                   <option value="">{usersLoading ? "Loading users..." : "Select a user"}</option>
+                  {editingTeamMember?.user && (
+                    <option value={editingTeamMember.userId}>
+                      {editingTeamMember.user.name} — {editingTeamMember.user.email}
+                    </option>
+                  )}
                   {users
                     .filter((user) => !teamMembers.some((member) => member.userId === user.id))
                     .map((user) => (
@@ -3047,7 +3456,46 @@ function App() {
             <div className="modal-footer">
               <button className="secondary-button" onClick={closeMemberModal} disabled={memberSaving}>Cancel</button>
               <button className="primary-button" onClick={() => void saveTeamMember()} disabled={memberSaving || usersLoading}>
-                {memberSaving ? "Adding..." : "Add Member"}
+                {memberSaving ? (editingTeamMember ? "Saving..." : "Adding...") : (editingTeamMember ? "Save Role" : "Add Member")}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {membershipEditOpen && editingMembership && (
+        <div className="modal-backdrop" onMouseDown={closeMembershipEdit}>
+          <div className="entity-modal" onMouseDown={(event) => event.stopPropagation()}>
+            <div className="modal-header">
+              <div>
+                <span className="page-eyebrow">ORGANIZATION ACCESS</span>
+                <h2>Edit Member Role</h2>
+              </div>
+              <button className="modal-close" onClick={closeMembershipEdit} disabled={membershipSaving}>×</button>
+            </div>
+            <div className="modal-body">
+              <div className="role-edit-identity">
+                <strong>{editingMembership.user?.name ?? "Organization member"}</strong>
+                <span>{editingMembership.user?.email ?? ""}</span>
+              </div>
+              <label className="form-field">
+                <span>Organization Role</span>
+                <select
+                  value={membershipEditRole}
+                  disabled={membershipSaving}
+                  onChange={(event) => setMembershipEditRole(event.target.value)}
+                >
+                  <option value="MEMBER">MEMBER</option>
+                  <option value="ADMIN">ADMIN</option>
+                  <option value="OWNER">OWNER</option>
+                </select>
+              </label>
+              {membersError && <div className="form-error">{membersError}</div>}
+            </div>
+            <div className="modal-footer">
+              <button className="secondary-button" onClick={closeMembershipEdit} disabled={membershipSaving}>Cancel</button>
+              <button className="primary-button" onClick={() => void saveOrganizationMemberRole()} disabled={membershipSaving}>
+                {membershipSaving ? "Saving..." : "Save Role"}
               </button>
             </div>
           </div>
@@ -3056,59 +3504,94 @@ function App() {
 
       {membershipModalOpen && (
         <div className="modal-backdrop" onMouseDown={closeMembershipModal}>
-          <div className="entity-modal membership-modal" onMouseDown={(event) => event.stopPropagation()}>
+          <div className="entity-modal membership-modal invitation-modal" onMouseDown={(event) => event.stopPropagation()}>
             <div className="modal-header">
               <div>
-                <span className="page-eyebrow">ORGANIZATION MEMBERSHIP</span>
-                <h2>Add Member</h2>
+                <span className="page-eyebrow">ORGANIZATION INVITATION</span>
+                <h2>{invitationLink ? "Invitation Ready" : "Invite Member"}</h2>
               </div>
               <button className="modal-close" onClick={closeMembershipModal} disabled={membershipSaving}>×</button>
             </div>
 
-            <div className="modal-body">
-              <label className="form-field">
-                <span>User</span>
-                <select
-                  value={membershipForm.userId}
-                  disabled={membershipSaving || usersLoading}
-                  onChange={(event) => setMembershipForm((current) => ({ ...current, userId: event.target.value }))}
-                >
-                  <option value="">{usersLoading ? "Loading users..." : "Select a user"}</option>
-                  {users
-                    .filter((user) => !organizationMembers.some((member) => member.userId === user.id))
-                    .map((user) => (
-                      <option key={user.id} value={user.id}>
-                        {user.name} — {user.email}
-                      </option>
-                    ))}
-                </select>
-              </label>
+            {!invitationLink ? (
+              <>
+                <div className="modal-body">
+                  <div className="invitation-intro">
+                    <div className="invitation-intro-icon">✉</div>
+                    <div>
+                      <strong>Invite someone to your organization</strong>
+                      <p>They will create their own password when they accept the invitation.</p>
+                    </div>
+                  </div>
 
-              <label className="form-field">
-                <span>Organization Role</span>
-                <select
-                  value={membershipForm.role}
-                  disabled={membershipSaving}
-                  onChange={(event) => setMembershipForm((current) => ({ ...current, role: event.target.value }))}
-                >
-                  <option value="MEMBER">MEMBER</option>
-                  <option value="ADMIN">ADMIN</option>
-                  {organizationMembers.find((member) => member.userId === currentUser?.id)?.role === "OWNER" && (
-                    <option value="OWNER">OWNER</option>
-                  )}
-                </select>
-                <small>Role assignment is enforced by the backend. Only an OWNER can assign the OWNER role.</small>
-              </label>
+                  <label className="form-field">
+                    <span>Email address</span>
+                    <input
+                      type="email"
+                      value={membershipForm.email}
+                      disabled={membershipSaving}
+                      onChange={(event) => setMembershipForm((current) => ({ ...current, email: event.target.value }))}
+                      placeholder="person@company.com"
+                      autoFocus
+                    />
+                  </label>
 
-              {membersError && <div className="form-error">{membersError}</div>}
-            </div>
+                  <label className="form-field">
+                    <span>Organization Role</span>
+                    <select
+                      value={membershipForm.role}
+                      disabled={membershipSaving}
+                      onChange={(event) => setMembershipForm((current) => ({ ...current, role: event.target.value }))}
+                    >
+                      <option value="MEMBER">MEMBER</option>
+                      <option value="ADMIN">ADMIN</option>
+                      {organizationMembers.find((member) => member.userId === currentUser?.id)?.role === "OWNER" && (
+                        <option value="OWNER">OWNER</option>
+                      )}
+                    </select>
+                    <small>The invited person chooses their own password during setup.</small>
+                  </label>
 
-            <div className="modal-footer">
-              <button className="secondary-button" onClick={closeMembershipModal} disabled={membershipSaving}>Cancel</button>
-              <button className="primary-button" onClick={() => void saveOrganizationMember()} disabled={membershipSaving || usersLoading}>
-                {membershipSaving ? "Adding..." : "Add Member"}
-              </button>
-            </div>
+                  {membersError && <div className="form-error">{membersError}</div>}
+                </div>
+
+                <div className="modal-footer">
+                  <button className="secondary-button" onClick={closeMembershipModal} disabled={membershipSaving}>Cancel</button>
+                  <button className="primary-button" onClick={() => void saveOrganizationMember()} disabled={membershipSaving}>
+                    {membershipSaving ? "Creating invitation..." : "Create Invitation"}
+                  </button>
+                </div>
+              </>
+            ) : (
+              <>
+                <div className="modal-body">
+                  <div className="invitation-success">
+                    <div className="invitation-success-icon">✓</div>
+                    <h3>Invitation created</h3>
+                    <p>Share this secure invitation link with the new member.</p>
+                  </div>
+
+                  <div className="invitation-link-box">
+                    <span>{invitationLink}</span>
+                    <button
+                      type="button"
+                      className="secondary-button invitation-copy-button"
+                      onClick={() => void navigator.clipboard.writeText(invitationLink)}
+                    >
+                      Copy Link
+                    </button>
+                  </div>
+
+                  <div className="invitation-note">
+                    The link expires automatically and can only be used once. The recipient will set their own password.
+                  </div>
+                </div>
+
+                <div className="modal-footer">
+                  <button className="primary-button" onClick={closeMembershipModal}>Done</button>
+                </div>
+              </>
+            )}
           </div>
         </div>
       )}
@@ -3235,6 +3718,53 @@ function App() {
                 disabled={relationshipSaving || (graph?.nodes.length ?? 0) < 2}
               >
                 {relationshipSaving ? "Creating..." : "Create Relationship"}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+      {confirmDialog && (
+        <div
+          className="confirm-backdrop"
+          role="presentation"
+          onMouseDown={() => setConfirmDialog(null)}
+        >
+          <div
+            className="confirm-dialog"
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="confirm-dialog-title"
+            onMouseDown={(event) => event.stopPropagation()}
+          >
+            <div className="confirm-dialog-icon" aria-hidden="true">
+              <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.9" strokeLinecap="round" strokeLinejoin="round">
+                <path d="M12 3 21 7v5c0 4.8-3.2 7.8-9 9-5.8-1.2-9-4.2-9-9V7l9-4Z" />
+                <path d="M12 8v5" />
+                <path d="M12 16h.01" />
+              </svg>
+            </div>
+            <div className="confirm-dialog-content">
+              <h3 id="confirm-dialog-title">{confirmDialog.title}</h3>
+              <p>{confirmDialog.message}</p>
+            </div>
+            <div className="confirm-dialog-actions">
+              <button
+                type="button"
+                className="confirm-cancel-button"
+                onClick={() => setConfirmDialog(null)}
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                className="confirm-delete-button"
+                onClick={() => {
+                  const action = confirmDialog.onConfirm;
+                  setConfirmDialog(null);
+                  action();
+                }}
+              >
+                {confirmDialog.confirmLabel}
               </button>
             </div>
           </div>

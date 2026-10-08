@@ -15,11 +15,10 @@ model User {
   createdAt    DateTime @default(now())
   updatedAt    DateTime @updatedAt
 
-  memberships             Membership[]
-  teamMemberships         TeamMember[]
-  createdRelationships    Relationship[]
-  createdIncidents        Incident[]
-  sentOrganizationInvites OrganizationInvitation[] @relation("OrganizationInvitationInvitedBy")
+  memberships           Membership[]
+  teamMemberships       TeamMember[]
+  createdRelationships  Relationship[]
+  createdIncidents      Incident[]
 }
 
 model Organization {
@@ -34,16 +33,15 @@ model Organization {
   entities      Entity[]
   relationships Relationship[]
   incidents     Incident[]
-  invitations   OrganizationInvitation[]
 }
 
 model Team {
-  id             String   @id @default(uuid())
+  id             String       @id @default(uuid())
   organizationId String
   name           String
   slug           String
-  createdAt      DateTime @default(now())
-  updatedAt      DateTime @updatedAt
+  createdAt      DateTime     @default(now())
+  updatedAt      DateTime     @updatedAt
 
   organization Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
 
@@ -66,11 +64,11 @@ model TeamMember {
 }
 
 model Membership {
-  id             String   @id @default(uuid())
+  id             String       @id @default(uuid())
   userId         String
   organizationId String
-  role           String   @default("MEMBER")
-  createdAt      DateTime @default(now())
+  role           String       @default("MEMBER")
+  createdAt      DateTime     @default(now())
 
   user         User         @relation(fields: [userId], references: [id], onDelete: Cascade)
   organization Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
@@ -85,6 +83,7 @@ model EntityType {
 
   entities Entity[]
 }
+
 
 model Entity {
   id             String   @id @default(uuid())
@@ -133,19 +132,19 @@ model Relationship {
 }
 
 model Incident {
-  id               String @id @default(uuid())
+  id               String   @id @default(uuid())
   organizationId   String
   affectedEntityId String
   createdById      String
 
-  title       String
-  description String?
-  severity    String  @default("MEDIUM")
-  status      String  @default("OPEN")
+  title            String
+  description      String?
+  severity         String   @default("MEDIUM")
+  status           String   @default("OPEN")
 
-  createdAt  DateTime  @default(now())
-  updatedAt  DateTime  @updatedAt
-  resolvedAt DateTime?
+  createdAt        DateTime @default(now())
+  updatedAt        DateTime @updatedAt
+  resolvedAt       DateTime?
 
   organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
   affectedEntity Entity       @relation(fields: [affectedEntityId], references: [id], onDelete: Cascade)
@@ -155,23 +154,4 @@ model Incident {
   @@index([affectedEntityId])
   @@index([status])
   @@index([severity])
-}
-
-model OrganizationInvitation {
-  id             String    @id @default(uuid())
-  organizationId String
-  invitedById    String
-  email          String
-  role           String    @default("MEMBER")
-  tokenHash      String    @unique
-  expiresAt      DateTime
-  acceptedAt     DateTime?
-  createdAt      DateTime  @default(now())
-
-  organization Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
-  invitedBy    User         @relation("OrganizationInvitationInvitedBy", fields: [invitedById], references: [id], onDelete: Restrict)
-
-  @@index([organizationId])
-  @@index([email])
-  @@index([expiresAt])
 }

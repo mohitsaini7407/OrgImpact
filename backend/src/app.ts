@@ -1,6 +1,5 @@
 import express from "express";
 import cors from "cors";
-
 import authRoutes from "./routes/auth.routes.js";
 import organizationRoutes from "./routes/organization.routes.js";
 import membershipRoutes from "./routes/membership.routes.js";
@@ -11,18 +10,18 @@ import entityTypeRoutes from "./routes/entity-type.routes.js";
 import entityRoutes from "./routes/entity.routes.js";
 import relationshipRoutes from "./routes/relationship.routes.js";
 import impactRoutes from "./routes/impact.routes.js";
-import graphRoutes from "./routes/graph.routes.js";
 import incidentRoutes from "./routes/incident.routes.js";
+import graphRoutes from "./routes/graph.routes.js";
+import invitationRoutes from "./routes/invitation.routes.js";
 import { errorHandler } from "./middleware/error-handler.js";
 
 const app = express();
 
 app.use(
   cors({
-    origin: "http://localhost:5173",
+    origin: process.env.FRONTEND_URL || "http://localhost:5173",
   }),
 );
-
 app.use(express.json());
 
 app.get("/health", (_req, res) => {
@@ -32,70 +31,20 @@ app.get("/health", (_req, res) => {
   });
 });
 
-/*
- * Authentication
- */
 app.use("/auth", authRoutes);
-
-/*
- * Organizations
- */
 app.use("/organizations", organizationRoutes);
-
-/*
- * Memberships
- */
 app.use("/memberships", membershipRoutes);
-
-/*
- * Users
- */
+app.use("/invitations", invitationRoutes);
 app.use("/users", userRoutes);
-
-/*
- * Teams
- */
 app.use("/teams", teamRoutes);
-
-/*
- * Team Members
- */
 app.use("/team-members", teamMemberRoutes);
-
-/*
- * Entity Types
- */
 app.use("/entity-types", entityTypeRoutes);
-
-/*
- * Entities
- */
 app.use("/entities", entityRoutes);
-
-/*
- * Relationships
- */
 app.use("/relationships", relationshipRoutes);
-
-/*
- * Impact Analysis
- */
 app.use("/impact", impactRoutes);
-
-/*
- * Incidents
- */
-
 app.use("/incidents", incidentRoutes);
-
-/*
- * Graph
- */
 app.use("/graph", graphRoutes);
 
-/*
- * Error Handler
- */
 app.use(errorHandler);
 
 export default app;
