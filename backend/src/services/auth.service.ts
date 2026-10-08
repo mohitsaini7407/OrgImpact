@@ -12,6 +12,16 @@ function getJwtSecret(): string {
   return secret;
 }
 
+function getJwtExpiresIn(): jwt.SignOptions["expiresIn"] {
+  const expiresIn = process.env.JWT_EXPIRES_IN;
+
+  if (!expiresIn) {
+    throw new Error("JWT_EXPIRES_IN is not defined");
+  }
+
+  return expiresIn as jwt.SignOptions["expiresIn"];
+}
+
 export async function registerUser(
   name: string,
   email: string,
@@ -62,8 +72,8 @@ export async function loginUser(
     },
     getJwtSecret(),
     {
-      expiresIn: "7d",
-    },
+      expiresIn: getJwtExpiresIn() as jwt.SignOptions["expiresIn"],
+    } as jwt.SignOptions,
   );
 
   return {
