@@ -24,14 +24,14 @@ const router = Router();
 
 router.post(
   "/register",
-  authRateLimit(5),
+  authRateLimit(50),
   validate(registerSchema),
   asyncHandler(registerController),
 );
 
 router.post(
   "/login",
-  authRateLimit(10),
+  authRateLimit(100),
   validate(loginSchema),
   asyncHandler(loginController),
 );
