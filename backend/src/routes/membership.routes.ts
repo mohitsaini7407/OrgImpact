@@ -12,6 +12,8 @@ import { authenticate } from "../middleware/auth.js";
 import { requireOrganizationMember } from "../middleware/organization-auth.js";
 import { requireRole } from "../middleware/require-role.js";
 import { createMembershipSchema } from "./membership.schema.js";
+import { revokeOrganizationMembership } from "../socket.js";
+import { publishRealtimeEvent } from "../lib/realtime.js";
 
 const router = Router();
 
@@ -28,6 +30,11 @@ async function requireMembershipManager(
 ) {
   try {
     const membershipId = req.params.membershipId;
+    if (typeof membershipId !== "string" || membershipId.length === 0) {
+      res.status(400).json({ error: "Membership ID is required" });
+      return;
+    }
+
     const target = await prisma.membership.findUnique({
       where: { id: membershipId },
     });
@@ -51,18 +58,33 @@ async function requireMembershipManager(
       return;
     }
 
-    if (!["OWNER", "ADMIN"].includes(requester.role)) {
+    const organization = await prisma.organization.findUnique({
+      where: { id: target.organizationId },
+      select: { createdById: true },
+    });
+    const requesterIsCreator = organization?.createdById === req.userId;
+
+    if (!["OWNER", "ADMIN"].includes(requester.role) && !requesterIsCreator) {
       res.status(403).json({ error: "Insufficient permissions to manage organization members" });
       return;
     }
 
-    if (requester.role === "ADMIN" && target.role !== "MEMBER") {
+    if (requester.role === "ADMIN" && target.role !== "MEMBER" && !requesterIsCreator) {
       res.status(403).json({ error: "ADMIN can only manage MEMBER accounts" });
       return;
     }
 
     if (target.userId === req.userId) {
       res.status(400).json({ error: "You cannot modify your own organization membership" });
+      return;
+    }
+
+    if (target.userId === organization?.createdById) {
+      res.status(403).json({ error: "The organization creator cannot be changed or removed" });
+      return;
+    }
+    if (target.role === "OWNER" && !requesterIsCreator) {
+      res.status(403).json({ error: "Only the organization creator can change or remove another owner" });
       return;
     }
 
@@ -79,7 +101,7 @@ router.post(
   authenticate,
   validate(createMembershipSchema),
   requireOrganizationMember,
-  requireRole("OWNER", "ADMIN"),
+  requireRole("OWNER"),
   asyncHandler(createMembershipController),
 );
 
@@ -97,6 +119,10 @@ router.patch(
   asyncHandler(requireMembershipManager),
   asyncHandler(async (req, res) => {
     const membershipId = req.params.membershipId;
+    if (typeof membershipId !== "string" || membershipId.length === 0) {
+      res.status(400).json({ error: "Membership ID is required" });
+      return;
+    }
     const role = req.body.role as "OWNER" | "ADMIN" | "MEMBER";
 
     const target = await prisma.membership.findUnique({
@@ -108,7 +134,18 @@ router.patch(
       return;
     }
 
-    if (req.organizationRole === "ADMIN" && role !== "MEMBER") {
+    const organization = await prisma.organization.findUnique({
+      where: { id: target.organizationId },
+      select: { createdById: true },
+    });
+    const requesterIsCreator = organization?.createdById === req.userId;
+
+    if (role === "OWNER" && target.role !== "OWNER" && !requesterIsCreator) {
+      res.status(403).json({ error: "Only the organization creator can assign the OWNER title" });
+      return;
+    }
+
+    if (req.organizationRole === "ADMIN" && role !== "MEMBER" && !requesterIsCreator) {
       res.status(403).json({ error: "ADMIN can only assign the MEMBER role" });
       return;
     }
@@ -146,6 +183,10 @@ router.delete(
   asyncHandler(requireMembershipManager),
   asyncHandler(async (req, res) => {
     const membershipId = req.params.membershipId;
+    if (typeof membershipId !== "string" || membershipId.length === 0) {
+      res.status(400).json({ error: "Membership ID is required" });
+      return;
+    }
     const target = await prisma.membership.findUnique({
       where: { id: membershipId },
     });
@@ -166,6 +207,8 @@ router.delete(
     }
 
     await prisma.membership.delete({ where: { id: membershipId } });
+    revokeOrganizationMembership(target.userId, target.organizationId);
+    await publishRealtimeEvent("organization:membership-removed", target.organizationId, { userId: target.userId });
     res.status(204).send();
   }),
 );

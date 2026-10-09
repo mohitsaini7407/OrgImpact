@@ -12,6 +12,7 @@ model User {
   name         String
   email        String   @unique
   passwordHash String?
+  emailVerifiedAt DateTime?
   createdAt    DateTime @default(now())
   updatedAt    DateTime @updatedAt
 
@@ -20,21 +21,32 @@ model User {
   createdRelationships    Relationship[]
   createdIncidents        Incident[]
   sentOrganizationInvites OrganizationInvitation[] @relation("OrganizationInvitationInvitedBy")
+  organizationJoinRequests OrganizationJoinRequest[]
+  createdOrganizations    Organization[] @relation("OrganizationCreator")
+  conversationMemberships ConversationMember[]
+  sentMessages             Message[]
 }
 
 model Organization {
-  id        String   @id @default(uuid())
-  name      String
-  slug      String   @unique
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
+  id          String   @id @default(uuid())
+  name        String
+  slug        String   @unique
+  joinCode    String   @unique
+  createdById String?
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
 
+  createdBy    User?       @relation("OrganizationCreator", fields: [createdById], references: [id], onDelete: SetNull)
   memberships   Membership[]
   teams         Team[]
   entities      Entity[]
   relationships Relationship[]
   incidents     Incident[]
   invitations   OrganizationInvitation[]
+  joinRequests   OrganizationJoinRequest[]
+  conversations  Conversation[]
+
+  @@index([createdById])
 }
 
 model Team {
@@ -48,6 +60,7 @@ model Team {
   organization Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
 
   members TeamMember[]
+  conversation Conversation?
 
   @@unique([organizationId, slug])
 }
@@ -150,6 +163,7 @@ model Incident {
   organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
   affectedEntity Entity       @relation(fields: [affectedEntityId], references: [id], onDelete: Cascade)
   createdBy      User         @relation(fields: [createdById], references: [id], onDelete: Restrict)
+  conversation   Conversation?
 
   @@index([organizationId])
   @@index([affectedEntityId])
@@ -174,4 +188,91 @@ model OrganizationInvitation {
   @@index([organizationId])
   @@index([email])
   @@index([expiresAt])
+}
+
+
+model EmailVerificationOTP {
+  id               String   @id @default(uuid())
+  email            String   @unique
+  name             String
+  passwordHash     String
+  codeHash         String
+  expiresAt        DateTime
+  resendAvailableAt DateTime
+  attempts         Int      @default(0)
+  createdAt        DateTime @default(now())
+  updatedAt        DateTime @updatedAt
+
+  @@index([expiresAt])
+}
+
+model OrganizationJoinRequest {
+  id             String   @id @default(uuid())
+  organizationId String
+  userId         String
+  status         String   @default("PENDING")
+  reviewedById   String?
+  reviewedAt     DateTime?
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+
+  organization Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  user         User         @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([organizationId, userId])
+  @@index([organizationId, status])
+  @@index([userId, status])
+}
+
+model Conversation {
+  id             String   @id @default(uuid())
+  organizationId String
+  type           String
+  title          String?
+  directKey      String?
+  teamId         String?  @unique
+  incidentId     String?  @unique
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+
+  organization Organization       @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  team         Team?              @relation(fields: [teamId], references: [id], onDelete: Cascade)
+  incident     Incident?          @relation(fields: [incidentId], references: [id], onDelete: SetNull)
+  members      ConversationMember[]
+  messages     Message[]
+
+  @@unique([organizationId, directKey])
+  @@index([organizationId, updatedAt])
+  @@index([teamId])
+}
+
+model ConversationMember {
+  id             String   @id @default(uuid())
+  conversationId String
+  userId         String
+  joinedAt       DateTime @default(now())
+  lastReadAt     DateTime @default(now())
+
+  conversation Conversation @relation(fields: [conversationId], references: [id], onDelete: Cascade)
+  user         User         @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([conversationId, userId])
+  @@index([userId, lastReadAt])
+}
+
+model Message {
+  id              String   @id @default(uuid())
+  conversationId  String
+  senderId        String
+  content         String
+  clientMessageId String?
+  createdAt       DateTime @default(now())
+  editedAt        DateTime?
+
+  conversation Conversation @relation(fields: [conversationId], references: [id], onDelete: Cascade)
+  sender       User         @relation(fields: [senderId], references: [id], onDelete: Cascade)
+
+  @@unique([senderId, clientMessageId])
+  @@index([conversationId, createdAt, id])
+  @@index([senderId, createdAt])
 }

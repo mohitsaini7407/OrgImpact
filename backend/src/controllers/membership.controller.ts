@@ -9,7 +9,7 @@ export async function createMembershipController(
   req: Request,
   res: Response,
 ) {
-  const { userId, organizationId, role } = req.body;
+  const { email, organizationId } = req.body;
 
   if (!req.organizationRole) {
     res.status(403).json({
@@ -18,33 +18,21 @@ export async function createMembershipController(
     return;
   }
 
-  if (
-    role === "ADMIN" &&
-    req.organizationRole !== "OWNER"
-  ) {
-    res.status(403).json({
-      error: "Only an organization owner can assign the ADMIN role",
-    });
+  if (req.organizationRole !== "OWNER") {
+    res.status(403).json({ error: "Only an organization owner can add members" });
     return;
   }
 
-  if (
-    role === "OWNER" &&
-    req.organizationRole !== "OWNER"
-  ) {
-    res.status(403).json({
-      error: "Only an organization owner can assign the OWNER role",
-    });
-    return;
+  try {
+    const membership = await createMembership(email, organizationId);
+    res.status(201).json(membership);
+  } catch (error) {
+    if (error instanceof Error && error.message === "User not found") {
+      res.status(404).json({ error: "No OrgImpact account exists with this email address." });
+      return;
+    }
+    throw error;
   }
-
-  const membership = await createMembership(
-    userId,
-    organizationId,
-    role,
-  );
-
-  res.status(201).json(membership);
 }
 
 export async function getOrganizationMembersController(

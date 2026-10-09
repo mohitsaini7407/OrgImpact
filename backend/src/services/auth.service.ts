@@ -22,26 +22,25 @@ function getJwtExpiresIn(): jwt.SignOptions["expiresIn"] {
   return expiresIn as jwt.SignOptions["expiresIn"];
 }
 
+
 export async function registerUser(
   name: string,
   email: string,
   password: string,
 ) {
+  const normalizedEmail = email.trim().toLowerCase();
   const passwordHash = await bcrypt.hash(password, 12);
 
-  return prisma.user.create({
-    data: {
-      name,
-      email,
-      passwordHash,
-    },
-    select: {
-      id: true,
-      name: true,
-      email: true,
-      createdAt: true,
-    },
+  const user = await prisma.user.create({
+    data: { name: name.trim(), email: normalizedEmail, passwordHash },
+    select: { id: true, name: true, email: true, createdAt: true },
   });
+  const token = jwt.sign(
+    { userId: user.id, email: user.email },
+    getJwtSecret(),
+    { algorithm: "HS256", expiresIn: getJwtExpiresIn() } as jwt.SignOptions,
+  );
+  return { token, user };
 }
 
 export async function loginUser(
@@ -49,7 +48,7 @@ export async function loginUser(
   password: string,
 ) {
   const user = await prisma.user.findUnique({
-    where: { email },
+    where: { email: email.trim().toLowerCase() },
   });
 
   if (!user || !user.passwordHash) {
@@ -72,6 +71,7 @@ export async function loginUser(
     },
     getJwtSecret(),
     {
+      algorithm: "HS256",
       expiresIn: getJwtExpiresIn() as jwt.SignOptions["expiresIn"],
     } as jwt.SignOptions,
   );
@@ -98,9 +98,20 @@ export async function getUserById(
       createdAt: true,
       memberships: {
         include: {
-          organization: true,
+          organization: {
+            select: { id: true, name: true, slug: true, joinCode: true, createdById: true, createdAt: true, updatedAt: true },
+          },
         },
       },
     },
+  });
+}
+
+export async function updateUserName(userId: string, rawName: string) {
+  const name = rawName.trim();
+  return prisma.user.update({
+    where: { id: userId },
+    data: { name },
+    select: { id: true, name: true, email: true },
   });
 }

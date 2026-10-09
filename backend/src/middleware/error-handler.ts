@@ -7,7 +7,11 @@ export function errorHandler(
   res: Response,
   _next: NextFunction,
 ) {
-  console.error(error);
+  if (process.env.NODE_ENV === "production") {
+    console.error("Unhandled API error:", error instanceof Prisma.PrismaClientKnownRequestError ? { code: error.code } : error instanceof Error ? error.name : "UnknownError");
+  } else {
+    console.error(error);
+  }
 
   if (
     error instanceof Prisma.PrismaClientKnownRequestError
@@ -48,6 +52,16 @@ export function errorHandler(
       "Source and target entities cannot be the same": 400,
       "Source and target entities must belong to the same organization": 400,
       "User is already a member of this organization": 409,
+      "You are already a member of this organization": 409,
+      "An account with this email already exists.": 409,
+      "Invalid organization join code": 404,
+      "Your join request is already pending": 409,
+      "Join request not found": 404,
+      "Join request has already been reviewed": 409,
+      "You cannot start a direct conversation with yourself": 400,
+      "Both people must belong to this organization": 403,
+      "Team channel not found": 404,
+      "Message identifier was already used": 409,
     };
 
     const statusCode = knownErrors[error.message];

@@ -1,6 +1,7 @@
 import { Router } from "express";
 import { createInvitationController, getInvitationController, acceptInvitationController } from "../controllers/invitation.controller.js";
 import { authenticate } from "../middleware/auth.js";
+import { optionalAuthenticate } from "../middleware/optional-auth.js";
 import { requireOrganizationMember } from "../middleware/organization-auth.js";
 import { requireRole } from "../middleware/require-role.js";
 import { asyncHandler } from "../middleware/async-handler.js";
@@ -22,6 +23,7 @@ router.get("/:token", asyncHandler(getInvitationController));
 
 router.post(
   "/:token/accept",
+  optionalAuthenticate,
   validate(acceptInvitationSchema),
   asyncHandler(acceptInvitationController),
 );

@@ -2,8 +2,10 @@ import { Router } from "express";
 
 import {
   createTeamController,
+  deleteTeamController,
   getOrganizationTeamsController,
   getTeamByIdController,
+  updateTeamController,
 } from "../controllers/team.controller.js";
 
 import { validate } from "../middleware/validate.js";
@@ -13,7 +15,7 @@ import { requireOrganizationMember } from "../middleware/organization-auth.js";
 import { requireTeamOrganizationMember } from "../middleware/team-organization-auth.js";
 import { requireRole } from "../middleware/require-role.js";
 
-import { createTeamSchema } from "./team.schema.js";
+import { createTeamSchema, updateTeamSchema } from "./team.schema.js";
 
 const router = Router();
 
@@ -31,6 +33,23 @@ router.get(
   authenticate,
   requireOrganizationMember,
   asyncHandler(getOrganizationTeamsController),
+);
+
+router.patch(
+  "/:teamId",
+  authenticate,
+  requireTeamOrganizationMember,
+  validate(updateTeamSchema),
+  requireRole("OWNER"),
+  asyncHandler(updateTeamController),
+);
+
+router.delete(
+  "/:teamId",
+  authenticate,
+  requireTeamOrganizationMember,
+  requireRole("OWNER"),
+  asyncHandler(deleteTeamController),
 );
 
 router.get(

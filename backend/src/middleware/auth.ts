@@ -5,11 +5,6 @@ import {
 } from "express";
 import jwt from "jsonwebtoken";
 
-type JwtPayload = {
-  userId: string;
-  email: string;
-};
-
 function getJwtSecret(): string {
   const secret = process.env.JWT_SECRET;
 
@@ -36,12 +31,13 @@ export function authenticate(
     return;
   }
 
-  const [scheme, token] =
+  const [scheme, token, extra] =
     authorization.split(" ");
 
   if (
     scheme !== "Bearer" ||
-    !token
+    !token ||
+    extra
   ) {
     res.status(401).json({
       error: "Invalid authorization header",
@@ -54,7 +50,12 @@ export function authenticate(
     const payload = jwt.verify(
       token,
       getJwtSecret(),
-    ) as JwtPayload;
+      { algorithms: ["HS256"] },
+    );
+    if (typeof payload === "string" || typeof payload.userId !== "string" || !payload.userId) {
+      res.status(401).json({ error: "Invalid or expired token" });
+      return;
+    }
 
     req.userId = payload.userId;
 

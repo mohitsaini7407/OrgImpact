@@ -13,3 +13,11 @@ export const createOrganizationSchema = z
       ),
   })
   .strict();
+
+export const joinOrganizationSchema = z.object({
+  joinCode: z.string().trim().min(8).max(20).regex(/^[A-Za-z0-9-]+$/, "Invalid join code"),
+}).strict();
+
+export const reviewJoinRequestSchema = z.object({
+  decision: z.enum(["APPROVED", "REJECTED"]),
+}).strict();

@@ -1,23 +1,13 @@
 import { prisma } from "../lib/prisma.js";
 
-const VALID_ROLES = ["OWNER", "ADMIN", "MEMBER"] as const;
-
-type MembershipRole = (typeof VALID_ROLES)[number];
-
 export async function createMembership(
-  userId: string,
+  email: string,
   organizationId: string,
-  role: string,
 ) {
-  if (!VALID_ROLES.includes(role as MembershipRole)) {
-    throw new Error(
-      "Invalid membership role. Allowed roles: OWNER, ADMIN, MEMBER",
-    );
-  }
-
+  const normalizedEmail = email.trim().toLowerCase();
   const [user, organization] = await Promise.all([
     prisma.user.findUnique({
-      where: { id: userId },
+      where: { email: normalizedEmail },
     }),
     prisma.organization.findUnique({
       where: { id: organizationId },
@@ -36,7 +26,7 @@ export async function createMembership(
     await prisma.membership.findUnique({
       where: {
         userId_organizationId: {
-          userId,
+          userId: user.id,
           organizationId,
         },
       },
@@ -50,9 +40,9 @@ export async function createMembership(
 
   return prisma.membership.create({
     data: {
-      userId,
+      userId: user.id,
       organizationId,
-      role,
+      role: "MEMBER",
     },
     select: {
       id: true,
@@ -60,6 +50,7 @@ export async function createMembership(
       organizationId: true,
       role: true,
       createdAt: true,
+      user: { select: { id: true, name: true, email: true } },
     },
   });
 }
@@ -84,6 +75,9 @@ export async function getOrganizationMembers(
           email: true,
           createdAt: true,
         },
+      },
+      organization: {
+        select: { createdById: true },
       },
     },
     orderBy: {

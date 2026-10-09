@@ -1,6 +1,7 @@
 import crypto from "node:crypto";
 import bcrypt from "bcryptjs";
 import { prisma } from "../lib/prisma.js";
+import { getAllowedFrontendOrigins } from "../config/security.js";
 
 const INVITATION_TTL_HOURS = 72;
 
@@ -13,7 +14,7 @@ function createRawToken(): string {
 }
 
 function getFrontendUrl(): string {
-  return process.env.FRONTEND_URL || "http://localhost:5173";
+  return getAllowedFrontendOrigins()[0] || "http://localhost:5173";
 }
 
 export async function createOrganizationInvitation(
@@ -30,6 +31,17 @@ export async function createOrganizationInvitation(
   ]);
 
   if (!organization) throw new Error("Organization not found");
+
+  const [inviterMembership, organizationOwner] = await Promise.all([
+    prisma.membership.findUnique({
+      where: { userId_organizationId: { userId: invitedById, organizationId } },
+      select: { role: true },
+    }),
+    prisma.organization.findUnique({ where: { id: organizationId }, select: { createdById: true } }),
+  ]);
+  const inviterIsCreator = organizationOwner?.createdById === invitedById;
+  const allowedRoles = inviterIsCreator ? ["OWNER", "ADMIN", "MEMBER"] : inviterMembership?.role === "OWNER" ? ["ADMIN", "MEMBER"] : inviterMembership?.role === "ADMIN" ? ["MEMBER"] : [];
+  if (!allowedRoles.includes(role)) throw new Error("You do not have permission to invite a user with this role");
 
   if (existingUser) {
     const membership = await prisma.membership.findUnique({
@@ -104,6 +116,7 @@ export async function acceptOrganizationInvitation(
   rawToken: string,
   name: string | undefined,
   password: string | undefined,
+  authenticatedUserId?: string,
 ) {
   const tokenHash = hashToken(rawToken);
 
@@ -124,6 +137,10 @@ export async function acceptOrganizationInvitation(
     let userId: string;
 
     if (existingUser) {
+      if (!authenticatedUserId || authenticatedUserId !== existingUser.id) {
+        throw new Error("Sign in to the invited account to accept this invitation");
+      }
+
       const existingMembership = await tx.membership.findUnique({
         where: {
           userId_organizationId: {

@@ -1,11 +1,14 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
+import type { FormEvent } from "react";
+import { createPortal } from "react-dom";
 import { socket } from "./socket";
 import {
   Background,
   Controls,
   MarkerType,
-  MiniMap,
   ReactFlow,
+  useStore,
+  useViewport,
   type Edge,
   type Node,
   type NodeMouseHandler,
@@ -14,10 +17,11 @@ import {
 import "@xyflow/react/dist/style.css";
 import "./App.css";
 import Login from "./Login";
+import OrganizationOnboarding from "./OrganizationOnboarding";
 import OrgImpactLogo from "./OrgImpactLogo";
 
 
-type NavIconName = "dashboard" | "entities" | "relationships" | "teams" | "members" | "incidents" | "simulation";
+type NavIconName = "dashboard" | "entities" | "relationships" | "teams" | "members" | "incidents" | "simulation" | "chat";
 
 function NavIcon({ name }: { name: NavIconName }) {
   const common = { width: 21, height: 21, viewBox: "0 0 24 24", fill: "none", stroke: "currentColor", strokeWidth: 1.8, strokeLinecap: "round" as const, strokeLinejoin: "round" as const, "aria-hidden": true };
@@ -26,12 +30,12 @@ function NavIcon({ name }: { name: NavIconName }) {
   if (name === "relationships") return <svg {...common}><circle cx="6" cy="12" r="2.2"/><circle cx="18" cy="6" r="2.2"/><circle cx="18" cy="18" r="2.2"/><path d="m8 11 7.8-4"/><path d="m8 13 7.8 4"/></svg>;
   if (name === "teams") return <svg {...common}><circle cx="9" cy="8" r="3"/><path d="M3.5 20c.4-3.2 2.2-5 5.5-5s5.1 1.8 5.5 5"/><path d="M16 5.5a3 3 0 0 1 0 5.7"/><path d="M17 15c2.2.3 3.6 1.8 4 4"/></svg>;
   if (name === "members") return <svg {...common}><circle cx="12" cy="8" r="3.1"/><path d="M5 20c.5-4 2.8-6 7-6s6.5 2 7 6"/></svg>;
+  if (name === "chat") return <svg {...common}><path d="M20 11.5a7.5 7.5 0 0 1-7.5 7.5H7l-4 2 1.4-4.2A7.5 7.5 0 1 1 20 11.5Z"/><path d="M8 11h.01M12 11h.01M16 11h.01"/></svg>;
   if (name === "incidents") return <svg {...common}><path d="M12 3 21 7v5c0 4.8-3.2 7.8-9 9-5.8-1.2-9-4.2-9-9V7l9-4Z"/><path d="M12 8v5"/><path d="M12 16h.01"/></svg>;
   return <svg {...common}><path d="M4 19V5"/><path d="M4 19h16"/><path d="m7 15 4-4 3 2 5-6"/><path d="M16 7h3v3"/></svg>;
 }
 
-const API_BASE_URL = "http://localhost:5000";
-const ORGANIZATION_ID = "e9cd3e97-f509-4a60-a8c8-390f2b9dd8a6";
+const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || "http://localhost:5000";
 
 type GraphNode = {
   id: string;
@@ -47,6 +51,105 @@ type GraphEdge = {
   target: string;
   relationshipType: string;
 };
+
+function GraphMiniOverview({
+  nodes,
+  edges,
+}: {
+  nodes: Node[];
+  edges: Edge[];
+}) {
+  const viewport = useViewport();
+  const flowWidth = useStore((state) => state.width);
+  const flowHeight = useStore((state) => state.height);
+  const nodeWidth = 230;
+  const nodeHeight = 100;
+  const width = 220;
+  const height = 140;
+  const padding = 12;
+
+  if (nodes.length === 0) {
+    return null;
+  }
+
+  const minX = Math.min(...nodes.map((node) => node.position.x));
+  const minY = Math.min(...nodes.map((node) => node.position.y));
+  const maxX = Math.max(...nodes.map((node) => node.position.x + nodeWidth));
+  const maxY = Math.max(...nodes.map((node) => node.position.y + nodeHeight));
+  const graphWidth = Math.max(maxX - minX, 1);
+  const graphHeight = Math.max(maxY - minY, 1);
+  const scale = Math.min(
+    (width - padding * 2) / graphWidth,
+    (height - padding * 2) / graphHeight,
+  );
+  const offsetX = (width - graphWidth * scale) / 2;
+  const offsetY = (height - graphHeight * scale) / 2;
+  const positionOf = (node: Node, right = false) => ({
+    x: offsetX + (node.position.x + (right ? nodeWidth : 0) - minX) * scale,
+    y: offsetY + (node.position.y + nodeHeight / 2 - minY) * scale,
+  });
+  const nodeById = new Map(nodes.map((node) => [node.id, node]));
+  const viewportX = offsetX + (-viewport.x / viewport.zoom - minX) * scale;
+  const viewportY = offsetY + (-viewport.y / viewport.zoom - minY) * scale;
+  const viewportWidth = (flowWidth / viewport.zoom) * scale;
+  const viewportHeight = (flowHeight / viewport.zoom) * scale;
+
+  return (
+    <div className="graph-mini-overview" aria-label="Dependency graph overview">
+      <svg viewBox={`0 0 ${width} ${height}`} role="img" aria-hidden="true">
+        {edges.map((edge) => {
+          const source = nodeById.get(edge.source);
+          const target = nodeById.get(edge.target);
+          if (!source || !target) return null;
+          const start = positionOf(source, true);
+          const end = positionOf(target);
+          const middleX = (start.x + end.x) / 2;
+          return (
+            <path
+              key={edge.id}
+              className="graph-mini-edge"
+              d={`M ${start.x} ${start.y} H ${middleX} V ${end.y} H ${end.x}`}
+            />
+          );
+        })}
+        {nodes.map((node) => {
+          const x = offsetX + (node.position.x - minX) * scale;
+          const y = offsetY + (node.position.y - minY) * scale;
+          const miniWidth = nodeWidth * scale;
+          const miniHeight = nodeHeight * scale;
+          const name = typeof node.data.miniLabel === "string" ? node.data.miniLabel : "Dependency node";
+          return (
+            <g key={node.id}>
+              <title>{name}</title>
+              <rect
+                className="graph-mini-node"
+                x={x}
+                y={y}
+                width={miniWidth}
+                height={miniHeight}
+                rx={Math.min(3, miniHeight / 4)}
+                style={{ fill: typeof node.data.miniColor === "string" ? node.data.miniColor : "#38bdf8" }}
+              />
+              {miniWidth > 26 && miniHeight > 8 && (
+                <text className="graph-mini-label" x={x + 3} y={y + miniHeight / 2}>
+                  {name.length > 18 ? `${name.slice(0, 17)}…` : name}
+                </text>
+              )}
+            </g>
+          );
+        })}
+        <rect
+          className="graph-mini-viewport"
+          x={viewportX}
+          y={viewportY}
+          width={viewportWidth}
+          height={viewportHeight}
+          rx={2}
+        />
+      </svg>
+    </div>
+  );
+}
 
 type GraphResponse = {
   organizationId: string;
@@ -96,7 +199,7 @@ function IncidentStatusDropdown({
 
   useEffect(() => {
     function handlePointerDown(event: MouseEvent) {
-      if (ref.current && !ref.current.contains(event.target as Node)) {
+      if (event.target instanceof Element && ref.current && !ref.current.contains(event.target)) {
         setOpen(false);
       }
     }
@@ -177,6 +280,7 @@ type ActiveView =
   | "relationships"
   | "teams"
   | "members"
+  | "chat"
   | "incidents"
   | "simulation";
 
@@ -230,6 +334,7 @@ type Team = {
   slug: string;
   createdAt?: string;
   updatedAt?: string;
+  members?: TeamMember[];
 };
 
 type UserSummary = {
@@ -243,7 +348,32 @@ type TeamMember = {
   userId: string;
   teamId: string;
   role: string;
+  createdAt?: string;
   user?: UserSummary;
+};
+
+type ChatUser = { id: string; name: string; email: string };
+type ChatMessage = {
+  id: string;
+  conversationId: string;
+  senderId: string;
+  content: string;
+  clientMessageId: string | null;
+  createdAt: string;
+  editedAt: string | null;
+  sender: { id: string; name: string };
+};
+type ChatConversation = {
+  id: string;
+  type: "DIRECT" | "TEAM" | "GROUP";
+  title: string | null;
+  organizationId: string;
+  teamId: string | null;
+  team: { id: string; name: string; slug: string } | null;
+  updatedAt: string;
+  members: ChatUser[];
+  lastMessage: ChatMessage | null;
+  unreadCount: number;
 };
 
 type TeamForm = {
@@ -263,6 +393,7 @@ type OrganizationMember = {
   role: string;
   createdAt?: string;
   user?: UserSummary;
+  organization?: { createdById: string | null };
 };
 
 type CurrentUser = {
@@ -277,13 +408,22 @@ type CurrentUser = {
       id: string;
       name: string;
       slug: string;
+      createdById?: string | null;
     };
   }>;
 };
 
+type ApprovalRequest = {
+  id: string;
+  organizationId: string;
+  organizationName: string;
+  status: string;
+  createdAt: string;
+  user?: UserSummary;
+};
+
 type MembershipForm = {
   email: string;
-  role: string;
 };
 
 const emptyTeamForm: TeamForm = {
@@ -298,14 +438,24 @@ const emptyTeamMemberForm: TeamMemberForm = {
 
 const emptyMembershipForm: MembershipForm = {
   email: "",
-  role: "MEMBER",
 };
 
 const emptyIncidentForm: IncidentForm = { title: "", description: "", affectedEntityId: "", severity: "MEDIUM" };
 
 function App() {
+  const [theme, setTheme] = useState<"dark" | "light">(() => localStorage.getItem("orgimpact-theme") === "light" ? "light" : "dark");
+
+  useEffect(() => {
+    document.documentElement.dataset.theme = theme;
+    localStorage.setItem("orgimpact-theme", theme);
+  }, [theme]);
+
+  const organizationId = localStorage.getItem("organizationId") || "e9cd3e97-f509-4a60-a8c8-390f2b9dd8a6";
   const [token, setToken] = useState<string | null>(
     localStorage.getItem("token"),
+  );
+  const [showOnboarding, setShowOnboarding] = useState<boolean>(
+    Boolean(localStorage.getItem("token") && !localStorage.getItem("organizationId")),
   );
 
   const [activeView, setActiveView] =
@@ -362,20 +512,40 @@ function App() {
   const [teamMembers, setTeamMembers] = useState<TeamMember[]>([]);
   const [teamMembersLoading, setTeamMembersLoading] = useState(false);
   const [teamModalOpen, setTeamModalOpen] = useState(false);
+  const [editingTeam, setEditingTeam] = useState<Team | null>(null);
   const [teamForm, setTeamForm] = useState<TeamForm>(emptyTeamForm);
   const [teamSaving, setTeamSaving] = useState(false);
   const [memberModalOpen, setMemberModalOpen] = useState(false);
   const [editingTeamMember, setEditingTeamMember] = useState<TeamMember | null>(null);
   const [memberForm, setMemberForm] = useState<TeamMemberForm>(emptyTeamMemberForm);
   const [memberSaving, setMemberSaving] = useState(false);
-  const [users, setUsers] = useState<UserSummary[]>([]);
-  const [usersLoading, setUsersLoading] = useState(false);
-
   const [organizationMembers, setOrganizationMembers] = useState<OrganizationMember[]>([]);
   const [membersLoading, setMembersLoading] = useState(false);
   const [membersError, setMembersError] = useState("");
   const [currentUser, setCurrentUser] = useState<CurrentUser | null>(null);
+  const [profileNameEditing, setProfileNameEditing] = useState(false);
+  const [profileNameDraft, setProfileNameDraft] = useState("");
+  const [profileNameSaving, setProfileNameSaving] = useState(false);
+  const [profileNameError, setProfileNameError] = useState("");
+  const [chatConversations, setChatConversations] = useState<ChatConversation[]>([]);
+  const [chatConversationsLoading, setChatConversationsLoading] = useState(false);
+  const [chatLoading, setChatLoading] = useState(false);
+  const [chatSending, setChatSending] = useState(false);
+  const [chatError, setChatError] = useState("");
+  const [chatSearch, setChatSearch] = useState("");
+  const [selectedChatConversation, setSelectedChatConversation] = useState<ChatConversation | null>(null);
+  const [chatMessages, setChatMessages] = useState<ChatMessage[]>([]);
+  const [chatMessageText, setChatMessageText] = useState("");
+  const [chatConnected, setChatConnected] = useState(socket.connected);
+  const [chatTypingUser, setChatTypingUser] = useState<string | null>(null);
+  const [chatMobileOpen, setChatMobileOpen] = useState(false);
+  const [chatHasOlder, setChatHasOlder] = useState(false);
+  const [chatReadAtByConversation, setChatReadAtByConversation] = useState<Record<string, string>>({});
   const [profileMenuOpen, setProfileMenuOpen] = useState(false);
+  const [approvalRequests, setApprovalRequests] = useState<ApprovalRequest[]>([]);
+  const [notificationOpen, setNotificationOpen] = useState(false);
+  const [approvalActionId, setApprovalActionId] = useState<string | null>(null);
+  const [notificationError, setNotificationError] = useState("");
   const [simulationFilterOpen, setSimulationFilterOpen] = useState(false);
   const [confirmDialog, setConfirmDialog] = useState<{
     title: string;
@@ -384,14 +554,17 @@ function App() {
     onConfirm: () => void;
   } | null>(null);
   const profileMenuRef = useRef<HTMLDivElement | null>(null);
+  const profileMenuPanelRef = useRef<HTMLDivElement | null>(null);
   const simulationFilterRef = useRef<HTMLDivElement | null>(null);
+  const chatBottomRef = useRef<HTMLDivElement | null>(null);
+  const chatPendingMessageRef = useRef<{ content: string; id: string } | null>(null);
   const [membershipModalOpen, setMembershipModalOpen] = useState(false);
   const [membershipEditOpen, setMembershipEditOpen] = useState(false);
   const [editingMembership, setEditingMembership] = useState<OrganizationMember | null>(null);
   const [membershipEditRole, setMembershipEditRole] = useState("MEMBER");
   const [membershipForm, setMembershipForm] = useState<MembershipForm>(emptyMembershipForm);
   const [membershipSaving, setMembershipSaving] = useState(false);
-  const [invitationLink, setInvitationLink] = useState("");
+  const [membershipJoinCode, setMembershipJoinCode] = useState("");
 
   const [incidents, setIncidents] = useState<Incident[]>([]);
   const [incidentsLoading, setIncidentsLoading] = useState(false);
@@ -425,13 +598,14 @@ function App() {
 
     const handleConnect = () => {
       console.log("Socket connected:", socket.id);
-      socket.emit("join-organization", ORGANIZATION_ID);
+      socket.emit("join-organization", organizationId);
     };
 
     const handleDisconnect = () => {
       console.log("Socket disconnected");
     };
 
+    socket.auth = { token: localStorage.getItem("token") };
     socket.on("connect", handleConnect);
     socket.on("disconnect", handleDisconnect);
 
@@ -442,7 +616,7 @@ function App() {
       socket.off("disconnect", handleDisconnect);
       socket.disconnect();
     };
-  }, [token]);
+  }, [token, organizationId]);
 
 
   function getAuthHeaders(): HeadersInit {
@@ -463,6 +637,7 @@ function App() {
 
     localStorage.removeItem("token");
     setToken(null);
+    setShowOnboarding(false);
     setGraph(null);
     return true;
   }
@@ -480,7 +655,7 @@ function App() {
       setError("");
 
       const response = await fetch(
-        `${API_BASE_URL}/graph/organization/${ORGANIZATION_ID}`,
+        `${API_BASE_URL}/graph/organization/${organizationId}`,
         { headers: getAuthHeaders() },
       );
 
@@ -638,7 +813,7 @@ function App() {
       setTeamError("");
 
       const response = await fetch(
-        `${API_BASE_URL}/teams/organization/${ORGANIZATION_ID}`,
+        `${API_BASE_URL}/teams/organization/${organizationId}`,
         { headers: getAuthHeaders() },
       );
 
@@ -689,6 +864,102 @@ function App() {
     }
   }
 
+  async function saveProfileName(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    const name = profileNameDraft.trim();
+    if (name.length < 2 || name.length > 100) {
+      setProfileNameError("Name must be between 2 and 100 characters.");
+      return;
+    }
+    try {
+      setProfileNameSaving(true);
+      setProfileNameError("");
+      const response = await fetch(`${API_BASE_URL}/auth/me`, {
+        method: "PATCH",
+        headers: getAuthHeaders(),
+        body: JSON.stringify({ name }),
+      });
+      if (await handleUnauthorized(response)) throw new Error("Your session expired. Please sign in again.");
+      const data = await response.json().catch(() => null);
+      if (!response.ok) throw new Error(data?.error || "Unable to update your name.");
+      setCurrentUser((user) => user ? { ...user, name: data.name } : user);
+      setProfileNameDraft(data.name);
+      setProfileNameEditing(false);
+    } catch (error) {
+      setProfileNameError(error instanceof Error ? error.message : "Unable to update your name.");
+    } finally {
+      setProfileNameSaving(false);
+    }
+  }
+
+  async function loadApprovalRequests() {
+    const currentToken = localStorage.getItem("token");
+    if (!currentToken) {
+      setApprovalRequests([]);
+      return;
+    }
+
+    try {
+      const meResponse = await fetch(`${API_BASE_URL}/auth/me`, {
+        headers: getAuthHeaders(),
+      });
+      if (!meResponse.ok) return;
+
+      const me = await meResponse.json();
+      const memberships: NonNullable<CurrentUser["memberships"]> = me.memberships ?? [];
+      setCurrentUser({ id: me.id, name: me.name, email: me.email, memberships });
+
+      const owners = memberships.filter((membership: NonNullable<CurrentUser["memberships"]>[number]) => membership.role === "OWNER");
+      const results = await Promise.all(owners.map(async (membership) => {
+        const response = await fetch(`${API_BASE_URL}/organizations/${membership.organizationId}/join-requests`, {
+          headers: getAuthHeaders(),
+        });
+        if (!response.ok) return [];
+
+        const requests = await response.json();
+        return (Array.isArray(requests) ? requests : []).map((request: ApprovalRequest) => ({
+          ...request,
+          organizationId: membership.organizationId,
+          organizationName: membership.organization?.name || "Organization",
+        }));
+      }));
+
+      setApprovalRequests(results.flat().filter((request) => request.status === "PENDING"));
+      setNotificationError("");
+    } catch (error) {
+      console.error("Unable to load approval requests:", error);
+    }
+  }
+
+  async function reviewApprovalRequest(request: ApprovalRequest, decision: "APPROVED" | "REJECTED") {
+    setApprovalActionId(request.id);
+    setNotificationError("");
+    try {
+      const response = await fetch(`${API_BASE_URL}/organizations/${request.organizationId}/join-requests/${request.id}`, {
+        method: "PATCH",
+        headers: getAuthHeaders(),
+        body: JSON.stringify({ decision }),
+      });
+      const data = await response.json().catch(() => null);
+      if (!response.ok) throw new Error(data?.error || "Unable to review join request");
+      await loadApprovalRequests();
+    } catch (error) {
+      setNotificationError(error instanceof Error ? error.message : "Unable to review join request");
+    } finally {
+      setApprovalActionId(null);
+    }
+  }
+
+  useEffect(() => {
+    if (!token) {
+      setApprovalRequests([]);
+      return;
+    }
+    void loadApprovalRequests();
+    const interval = window.setInterval(() => void loadApprovalRequests(), 30_000);
+    return () => window.clearInterval(interval);
+  }, [token]);
+
   async function loadOrganizationMembers() {
     const currentToken = localStorage.getItem("token");
     if (!currentToken) return;
@@ -698,7 +969,7 @@ function App() {
       setMembersError("");
 
       const response = await fetch(
-        `${API_BASE_URL}/memberships/organization/${ORGANIZATION_ID}`,
+        `${API_BASE_URL}/memberships/organization/${organizationId}`,
         { headers: getAuthHeaders() },
       );
 
@@ -722,7 +993,7 @@ function App() {
 
   function openAddOrganizationMember() {
     setMembershipForm(emptyMembershipForm);
-    setInvitationLink("");
+    setMembershipJoinCode("");
     setMembersError("");
     setMembershipModalOpen(true);
   }
@@ -730,7 +1001,7 @@ function App() {
   function closeMembershipModal() {
     setMembershipModalOpen(false);
     setMembershipForm(emptyMembershipForm);
-    setInvitationLink("");
+    setMembershipJoinCode("");
   }
 
   async function saveOrganizationMember() {
@@ -744,15 +1015,14 @@ function App() {
     try {
       setMembershipSaving(true);
       setMembersError("");
-      setInvitationLink("");
+      setMembershipJoinCode("");
 
-      const response = await fetch(`${API_BASE_URL}/invitations`, {
+      const response = await fetch(`${API_BASE_URL}/memberships`, {
         method: "POST",
         headers: getAuthHeaders(),
         body: JSON.stringify({
           email,
-          organizationId: ORGANIZATION_ID,
-          role: membershipForm.role,
+          organizationId: organizationId,
         }),
       });
 
@@ -762,14 +1032,27 @@ function App() {
 
       const data = await response.json().catch(() => null);
       if (!response.ok) {
+        if (response.status === 404 && data?.error === "No OrgImpact account exists with this email address.") {
+          const organizationsResponse = await fetch(`${API_BASE_URL}/organizations`, { headers: getAuthHeaders() });
+          const organizations = await organizationsResponse.json().catch(() => []);
+          const organization = Array.isArray(organizations)
+            ? organizations.find((item) => item.id === organizationId)
+            : null;
+          if (organization?.joinCode) {
+            setMembershipJoinCode(organization.joinCode);
+            return;
+          }
+          throw new Error("No account exists with this email, and the organization join code could not be loaded.");
+        }
         throw new Error(data?.error || data?.message || `Unable to create invitation (${response.status})`);
       }
 
-      setInvitationLink(data.invitationUrl ?? "");
       await loadOrganizationMembers();
+      setMembershipModalOpen(false);
+      setMembershipForm(emptyMembershipForm);
     } catch (err) {
       console.error(err);
-      setMembersError(err instanceof Error ? err.message : "Unable to create invitation.");
+      setMembersError(err instanceof Error ? err.message : "Unable to add member.");
     } finally {
       setMembershipSaving(false);
     }
@@ -852,32 +1135,6 @@ function App() {
     });
   }
 
-  async function loadUsers() {
-    const currentToken = localStorage.getItem("token");
-    if (!currentToken) return;
-
-    try {
-      setUsersLoading(true);
-      const response = await fetch(`${API_BASE_URL}/users`, { headers: getAuthHeaders() });
-
-      if (await handleUnauthorized(response)) {
-        throw new Error("Authentication failed. Please login again.");
-      }
-
-      const data = await response.json().catch(() => []);
-      if (!response.ok) {
-        throw new Error(data?.error || data?.message || `Unable to load users (${response.status})`);
-      }
-
-      setUsers(Array.isArray(data) ? data : data?.users ?? []);
-    } catch (err) {
-      console.error(err);
-      setTeamError(err instanceof Error ? err.message : "Unable to load users.");
-    } finally {
-      setUsersLoading(false);
-    }
-  }
-
   async function loadTeamMembers(teamId: string) {
     try {
       setTeamMembersLoading(true);
@@ -906,20 +1163,211 @@ function App() {
     }
   }
 
+  async function loadChatConversations() {
+    if (!localStorage.getItem("token")) return [] as ChatConversation[];
+    try {
+      setChatConversationsLoading(true);
+      setChatError("");
+      const response = await fetch(`${API_BASE_URL}/chat/organizations/${organizationId}/conversations`, { headers: getAuthHeaders() });
+      if (await handleUnauthorized(response)) throw new Error("Authentication failed. Please sign in again.");
+      const data = await response.json().catch(() => []);
+      if (!response.ok) throw new Error(data?.error || `Unable to load conversations (${response.status})`);
+      const conversations = Array.isArray(data) ? data as ChatConversation[] : [];
+      setChatConversations(conversations);
+      setSelectedChatConversation((current) => current ? conversations.find((item) => item.id === current.id) ?? null : null);
+      return conversations;
+    } catch (err) {
+      setChatError(err instanceof Error ? err.message : "Unable to load conversations.");
+      return [] as ChatConversation[];
+    } finally {
+      setChatConversationsLoading(false);
+    }
+  }
+
+  async function loadChatMessages(conversationId: string, before?: string) {
+    try {
+      setChatLoading(true);
+      setChatError("");
+      const query = before ? `?before=${encodeURIComponent(before)}` : "";
+      const response = await fetch(`${API_BASE_URL}/chat/conversations/${conversationId}/messages${query}`, { headers: getAuthHeaders() });
+      if (await handleUnauthorized(response)) throw new Error("Authentication failed. Please sign in again.");
+      const data = await response.json().catch(() => []);
+      if (!response.ok) throw new Error(data?.error || `Unable to load messages (${response.status})`);
+      const messages = Array.isArray(data) ? data as ChatMessage[] : [];
+      if (before) setChatMessages((current) => [...messages, ...current.filter((message) => !messages.some((item) => item.id === message.id))]);
+      else setChatMessages(messages);
+      setChatHasOlder(messages.length === 50);
+    } catch (err) {
+      setChatError(err instanceof Error ? err.message : "Unable to load messages.");
+    } finally {
+      setChatLoading(false);
+    }
+  }
+
+  async function markChatRead(conversationId: string) {
+    const markLocally = () => setChatConversations((current) => current.map((conversation) => conversation.id === conversationId ? { ...conversation, unreadCount: 0 } : conversation));
+    if (socket.connected) {
+      socket.emit("chat:mark-read", conversationId, (result: { ok: boolean }) => { if (result.ok) markLocally(); });
+      return;
+    }
+    const response = await fetch(`${API_BASE_URL}/chat/conversations/${conversationId}/read`, { method: "PATCH", headers: getAuthHeaders() });
+    if (response.ok) markLocally();
+  }
+
+  async function openChatConversation(conversation: ChatConversation) {
+    if (selectedChatConversation?.id && selectedChatConversation.id !== conversation.id) socket.emit("chat:leave-conversation", selectedChatConversation.id);
+    setSelectedChatConversation(conversation);
+    setChatMessages([]);
+    setChatTypingUser(null);
+    setChatMobileOpen(true);
+    socket.emit("chat:join-conversation", conversation.id, (result: { ok: boolean; error?: string }) => {
+      if (!result.ok) setChatError(result.error || "Unable to join this conversation.");
+    });
+    await Promise.all([loadChatMessages(conversation.id), markChatRead(conversation.id)]);
+  }
+
+  async function startDirectChat(user: ChatUser) {
+    setChatError("");
+    try {
+      const response = await fetch(`${API_BASE_URL}/chat/organizations/${organizationId}/conversations/direct`, {
+        method: "POST",
+        headers: getAuthHeaders(),
+        body: JSON.stringify({ userId: user.id }),
+      });
+      const data = await response.json().catch(() => null);
+      if (!response.ok) throw new Error(data?.error || `Unable to start conversation (${response.status})`);
+      const conversations = await loadChatConversations();
+      const conversation = conversations.find((item) => item.id === data.id);
+      if (conversation) await openChatConversation(conversation);
+    } catch (err) {
+      setChatError(err instanceof Error ? err.message : "Unable to start direct conversation.");
+    }
+  }
+
+  async function openTeamChat(team: Team) {
+    setChatError("");
+    try {
+      const response = await fetch(`${API_BASE_URL}/chat/organizations/${organizationId}/conversations/teams/${team.id}`, {
+        method: "POST",
+        headers: getAuthHeaders(),
+      });
+      const data = await response.json().catch(() => null);
+      if (!response.ok) throw new Error(data?.error || `Unable to open team channel (${response.status})`);
+      const conversations = await loadChatConversations();
+      const conversation = conversations.find((item) => item.id === data.id);
+      if (conversation) await openChatConversation(conversation);
+    } catch (err) {
+      setChatError(err instanceof Error ? err.message : "Unable to open team channel.");
+    }
+  }
+
+  async function sendChatMessage(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    const conversation = selectedChatConversation;
+    const content = chatMessageText.trim();
+    if (!conversation || !content || chatSending) return;
+    if (!socket.connected) {
+      setChatError("You are offline. Reconnect before sending your message.");
+      return;
+    }
+    setChatSending(true);
+    setChatError("");
+    if (chatPendingMessageRef.current?.content !== content) {
+      chatPendingMessageRef.current = { content, id: crypto.randomUUID() };
+    }
+    const clientMessageId = chatPendingMessageRef.current.id;
+    socket.timeout(10000).emit("chat:send-message", { conversationId: conversation.id, content, clientMessageId }, (timeoutError: Error | null, result: { ok: boolean; error?: string; message?: ChatMessage }) => {
+      setChatSending(false);
+      if (timeoutError) {
+        setChatError("The server did not confirm delivery. Reconnect and retry; the message ID prevents duplicate saves.");
+        return;
+      }
+      if (!result.ok || !result.message) {
+        setChatError(result.error || "Message could not be sent.");
+        return;
+      }
+      chatPendingMessageRef.current = null;
+      setChatMessageText("");
+      setChatMessages((current) => current.some((item) => item.id === result.message!.id) ? current : [...current, result.message!]);
+      setChatConversations((current) => current.map((item) => item.id === conversation.id ? { ...item, lastMessage: result.message!, updatedAt: result.message!.createdAt } : item));
+    });
+  }
+
   useEffect(() => {
     if (activeView === "teams" && token) {
       void loadTeams();
-      void loadUsers();
+      void loadOrganizationMembers();
+      void loadCurrentUser();
     }
   }, [activeView, token]);
 
   useEffect(() => {
     if (activeView === "members" && token) {
       void loadOrganizationMembers();
-      void loadUsers();
       void loadCurrentUser();
     }
   }, [activeView, token]);
+
+  useEffect(() => {
+    if (activeView === "chat" && token) {
+      void loadChatConversations();
+      void loadOrganizationMembers();
+      void loadTeams();
+      void loadCurrentUser();
+    }
+  }, [activeView, token, organizationId]);
+
+  useEffect(() => {
+    if (token) void loadChatConversations();
+  }, [token, organizationId]);
+
+  useEffect(() => {
+    if (!token) return;
+    const onConnect = () => {
+      setChatConnected(true);
+      if (selectedChatConversation) socket.emit("chat:join-conversation", selectedChatConversation.id);
+    };
+    const onDisconnect = () => setChatConnected(false);
+    const onMessage = (payload: { conversationId: string; message: ChatMessage }) => {
+      const { conversationId, message } = payload;
+      setChatConversations((current) => current.map((conversation) => conversation.id === conversationId ? {
+        ...conversation,
+        lastMessage: message,
+        updatedAt: message.createdAt,
+        unreadCount: activeView === "chat" && selectedChatConversation?.id === conversationId || message.senderId === currentUser?.id
+          ? 0
+          : conversation.unreadCount + 1,
+      } : conversation).sort((left, right) => right.updatedAt.localeCompare(left.updatedAt)));
+      if (selectedChatConversation?.id === conversationId) {
+        setChatMessages((current) => current.some((item) => item.id === message.id) ? current : [...current, message]);
+        if (activeView === "chat" && message.senderId !== currentUser?.id) void markChatRead(conversationId);
+      }
+    };
+    const onTyping = (payload: { conversationId: string; userId: string; expiresIn: number }) => {
+      if (payload.conversationId !== selectedChatConversation?.id || payload.userId === currentUser?.id) return;
+      const sender = selectedChatConversation.members.find((member) => member.id === payload.userId);
+      setChatTypingUser(sender?.name ?? "A teammate");
+      window.setTimeout(() => setChatTypingUser((current) => current === (sender?.name ?? "A teammate") ? null : current), payload.expiresIn);
+    };
+    const onRead = (payload: { conversationId: string; userId: string; lastReadAt: string }) => {
+      if (payload.userId !== currentUser?.id) {
+        setChatReadAtByConversation((current) => ({ ...current, [payload.conversationId]: payload.lastReadAt }));
+      }
+    };
+    socket.on("connect", onConnect);
+    socket.on("disconnect", onDisconnect);
+    socket.on("chat:message", onMessage);
+    socket.on("chat:typing", onTyping);
+    socket.on("chat:read", onRead);
+    setChatConnected(socket.connected);
+    return () => {
+      socket.off("connect", onConnect);
+      socket.off("disconnect", onDisconnect);
+      socket.off("chat:message", onMessage);
+      socket.off("chat:typing", onTyping);
+      socket.off("chat:read", onRead);
+    };
+  }, [token, activeView, selectedChatConversation?.id, currentUser?.id]);
 
   useEffect(() => {
     if (activeView === "incidents" && token) void loadIncidents();
@@ -1050,6 +1498,17 @@ function App() {
           y: row * 180 + 80,
         },
         data: {
+          miniLabel: entity.name,
+          miniColor:
+            type === "DATABASE"
+              ? "#a78bfa"
+              : type === "APPLICATION"
+                ? "#34d399"
+                : type === "INFRASTRUCTURE"
+                  ? "#fbbf24"
+                  : type === "SERVICE"
+                    ? "#38bdf8"
+                    : "#94a3b8",
           label: (
             <div
               className={[
@@ -1231,13 +1690,38 @@ function App() {
     void analyzeImpact(entity.id);
   };
 
-  function handleLogin(newToken: string) {
+  async function handleLogin(newToken: string) {
+    setShowOnboarding(true);
+    try {
+      const response = await fetch(`${API_BASE_URL}/auth/me`, {
+        headers: { Authorization: `Bearer ${newToken}` },
+      });
+      if (!response.ok) throw new Error("Unable to load your organization membership");
+      const user: CurrentUser = await response.json();
+      const memberships = user.memberships || [];
+      const savedOrganizationId = localStorage.getItem("organizationId");
+      const membership = memberships.find((item) => item.organizationId === savedOrganizationId) || memberships[0];
+
+      if (membership) {
+        localStorage.setItem("organizationId", membership.organizationId);
+        setShowOnboarding(false);
+      } else {
+        localStorage.removeItem("organizationId");
+        setShowOnboarding(true);
+      }
+    } catch (error) {
+      console.error("Unable to determine organization membership:", error);
+      localStorage.removeItem("organizationId");
+      setShowOnboarding(true);
+    }
+
     localStorage.setItem("token", newToken);
     setToken(newToken);
   }
 
   function handleLogout() {
     localStorage.removeItem("token");
+    localStorage.removeItem("organizationId");
     setToken(null);
     setGraph(null);
     setSelectedEntity(null);
@@ -1318,7 +1802,7 @@ function App() {
             criticality: entityForm.criticality,
           }
         : {
-            organizationId: ORGANIZATION_ID,
+            organizationId: organizationId,
             entityTypeId: entityForm.entityTypeId,
             name: entityForm.name.trim(),
             ...(entityForm.description.trim()
@@ -1464,7 +1948,7 @@ function App() {
         method: "POST",
         headers: getAuthHeaders(),
         body: JSON.stringify({
-          organizationId: ORGANIZATION_ID,
+          organizationId: organizationId,
           sourceEntityId,
           targetEntityId,
           relationshipType,
@@ -1570,7 +2054,7 @@ function App() {
     if (!localStorage.getItem("token")) return;
     try {
       setIncidentsLoading(true); setIncidentError("");
-      const response = await fetch(`${API_BASE_URL}/incidents/organization/${ORGANIZATION_ID}`, { headers: getAuthHeaders() });
+      const response = await fetch(`${API_BASE_URL}/incidents/organization/${organizationId}`, { headers: getAuthHeaders() });
       if (await handleUnauthorized(response)) throw new Error("Authentication failed. Please login again.");
       const data = await response.json().catch(() => []);
       if (!response.ok) throw new Error(data?.error || data?.message || `Unable to load incidents (${response.status})`);
@@ -1602,7 +2086,7 @@ function App() {
     try {
       setIncidentSaving(true); setIncidentError("");
       const url = editingIncident ? `${API_BASE_URL}/incidents/${editingIncident.id}` : `${API_BASE_URL}/incidents`;
-      const body = editingIncident ? { title: incidentForm.title.trim(), description: incidentForm.description.trim() || null, severity: incidentForm.severity } : { organizationId: ORGANIZATION_ID, affectedEntityId: incidentForm.affectedEntityId, title: incidentForm.title.trim(), description: incidentForm.description.trim() || undefined, severity: incidentForm.severity };
+      const body = editingIncident ? { title: incidentForm.title.trim(), description: incidentForm.description.trim() || null, severity: incidentForm.severity } : { organizationId: organizationId, affectedEntityId: incidentForm.affectedEntityId, title: incidentForm.title.trim(), description: incidentForm.description.trim() || undefined, severity: incidentForm.severity };
       const response = await fetch(url, { method: editingIncident ? "PATCH" : "POST", headers: getAuthHeaders(), body: JSON.stringify(body) });
       if (await handleUnauthorized(response)) throw new Error("Authentication failed. Please login again.");
       const data = await response.json().catch(() => null);
@@ -1855,21 +2339,64 @@ function App() {
   }
 
   useEffect(() => {
-    function handleDocumentPointerDown(event: MouseEvent) {
-      const target = event.target as Node;
+    function handleDocumentPointerDown(event: PointerEvent) {
+      if (!(event.target instanceof Node)) return;
+      const path = event.composedPath();
+      const account = profileMenuRef.current;
+      const panel = profileMenuPanelRef.current;
+      const clickedAccount = Boolean(account && (account.contains(event.target) || path.includes(account)));
+      const clickedPanel = Boolean(panel && (panel.contains(event.target) || path.includes(panel)));
 
-      if (profileMenuRef.current && !profileMenuRef.current.contains(target)) {
+      if (!clickedAccount && !clickedPanel) {
         setProfileMenuOpen(false);
       }
 
-      if (simulationFilterRef.current && !simulationFilterRef.current.contains(target)) {
+      if (simulationFilterRef.current && !simulationFilterRef.current.contains(event.target)) {
         setSimulationFilterOpen(false);
       }
     }
 
-    document.addEventListener("mousedown", handleDocumentPointerDown);
-    return () => document.removeEventListener("mousedown", handleDocumentPointerDown);
+    document.addEventListener("pointerdown", handleDocumentPointerDown);
+    return () => document.removeEventListener("pointerdown", handleDocumentPointerDown);
   }, []);
+
+  useLayoutEffect(() => {
+    if (!profileMenuOpen) return;
+
+    const positionProfileMenu = () => {
+      const account = profileMenuRef.current?.querySelector<HTMLElement>(".account-chip");
+      const panel = profileMenuPanelRef.current;
+      if (!account || !panel) return;
+
+      const accountRect = account.getBoundingClientRect();
+      const viewportWidth = document.documentElement.clientWidth;
+      const viewportHeight = window.innerHeight;
+      const margin = 12;
+      const panelWidth = panel.getBoundingClientRect().width;
+      const left = Math.max(margin, Math.min(accountRect.right - panelWidth, viewportWidth - panelWidth - margin));
+      const desiredTop = accountRect.bottom + 10;
+      const availableHeight = Math.max(160, viewportHeight - desiredTop - margin);
+      const top = availableHeight < 240 ? Math.max(margin, viewportHeight - Math.min(panel.offsetHeight, viewportHeight - margin * 2) - margin) : desiredTop;
+
+      panel.style.left = `${left}px`;
+      panel.style.right = "auto";
+      panel.style.top = `${top}px`;
+      panel.style.maxHeight = `${Math.max(160, viewportHeight - top - margin)}px`;
+    };
+
+    const keepMenuPointerEventsInside = (event: PointerEvent) => event.stopPropagation();
+    const panel = profileMenuPanelRef.current;
+    panel?.addEventListener("pointerdown", keepMenuPointerEventsInside);
+
+    positionProfileMenu();
+    window.addEventListener("resize", positionProfileMenu);
+    window.addEventListener("scroll", positionProfileMenu, true);
+    return () => {
+      window.removeEventListener("resize", positionProfileMenu);
+      window.removeEventListener("scroll", positionProfileMenu, true);
+      panel?.removeEventListener("pointerdown", keepMenuPointerEventsInside);
+    };
+  }, [profileMenuOpen]);
 
   function selectSimulationEntity(entityId: string) {
     setSimulationEntityId(entityId);
@@ -1885,13 +2412,22 @@ function App() {
   }
 
   function openCreateTeam() {
+    setEditingTeam(null);
     setTeamForm(emptyTeamForm);
+    setTeamError("");
+    setTeamModalOpen(true);
+  }
+
+  function openEditTeam(team: Team) {
+    setEditingTeam(team);
+    setTeamForm({ name: team.name, slug: team.slug });
     setTeamError("");
     setTeamModalOpen(true);
   }
 
   function closeTeamModal() {
     setTeamModalOpen(false);
+    setEditingTeam(null);
     setTeamForm(emptyTeamForm);
   }
 
@@ -1913,11 +2449,13 @@ function App() {
       setTeamSaving(true);
       setTeamError("");
 
-      const response = await fetch(`${API_BASE_URL}/teams`, {
-        method: "POST",
+      const response = await fetch(
+        editingTeam ? `${API_BASE_URL}/teams/${editingTeam.id}` : `${API_BASE_URL}/teams`,
+        {
+        method: editingTeam ? "PATCH" : "POST",
         headers: getAuthHeaders(),
         body: JSON.stringify({
-          organizationId: ORGANIZATION_ID,
+          ...(editingTeam ? {} : { organizationId }),
           name,
           slug,
         }),
@@ -1929,18 +2467,18 @@ function App() {
 
       const data = await response.json().catch(() => null);
       if (!response.ok) {
-        throw new Error(data?.error || data?.message || `Unable to create team (${response.status})`);
+        throw new Error(data?.error || data?.message || `Unable to ${editingTeam ? "update" : "create"} team (${response.status})`);
       }
 
+      const savedTeam = data?.team ?? data;
       closeTeamModal();
       await loadTeams();
-      const createdTeam = data?.team ?? data;
-      if (createdTeam?.id) {
-        setSelectedTeam(createdTeam);
+      if (savedTeam?.id) {
+        setSelectedTeam(savedTeam);
       }
     } catch (err) {
       console.error(err);
-      setTeamError(err instanceof Error ? err.message : "Unable to create team.");
+      setTeamError(err instanceof Error ? err.message : `Unable to ${editingTeam ? "update" : "create"} team.`);
     } finally {
       setTeamSaving(false);
     }
@@ -2063,6 +2601,40 @@ function App() {
     setTeamError("");
   }
 
+  function removeTeam(team: Team) {
+    setConfirmDialog({
+      title: "Delete team?",
+      message: `Delete ${team.name} and remove its team memberships? Organization members will keep their organization access.`,
+      confirmLabel: "Delete team",
+      onConfirm: () => {
+        void (async () => {
+          try {
+            const response = await fetch(`${API_BASE_URL}/teams/${team.id}`, {
+              method: "DELETE",
+              headers: getAuthHeaders(),
+            });
+            if (await handleUnauthorized(response)) {
+              throw new Error("Authentication failed. Please login again.");
+            }
+            const data = await response.json().catch(() => null);
+            if (!response.ok) {
+              throw new Error(data?.error || data?.message || `Unable to delete team (${response.status})`);
+            }
+            setConfirmDialog(null);
+            if (selectedTeam?.id === team.id) {
+              setSelectedTeam(null);
+              setTeamMembers([]);
+            }
+            await loadTeams();
+          } catch (err) {
+            setConfirmDialog(null);
+            setTeamError(err instanceof Error ? err.message : "Unable to delete team.");
+          }
+        })();
+      },
+    });
+  }
+
   const filteredEntities = useMemo(() => {
     const entities = graph?.nodes ?? [];
     const query = entitySearch.trim().toLowerCase();
@@ -2085,20 +2657,75 @@ function App() {
     organizationMembers.find((member) => member.userId === currentUser?.id)?.role ?? "";
   const currentTeamMemberRole =
     teamMembers.find((member) => member.userId === currentUser?.id)?.role ?? "";
+  const isOrganizationCreator = (targetOrganizationId: string) =>
+    Boolean(currentUser && currentUser.memberships?.some(
+      (membership) => membership.organizationId === targetOrganizationId &&
+        membership.organization?.createdById === currentUser.id,
+    ));
   const canManageSelectedTeam =
-    ["OWNER", "ADMIN"].includes(currentOrganizationRole) || currentTeamMemberRole === "LEAD";
-  const canEditOrganizationMember = (member: OrganizationMember) =>
-    currentUser?.id !== member.userId &&
-    (currentOrganizationRole === "OWNER" ||
-      (currentOrganizationRole === "ADMIN" && member.role === "MEMBER"));
-  const canEditTeamMember = (member: TeamMember) =>
-    currentUser?.id !== member.userId &&
-    (currentOrganizationRole === "OWNER" ||
-      currentOrganizationRole === "ADMIN" ||
-      (currentTeamMemberRole === "LEAD" && member.role === "MEMBER"));
+    currentOrganizationRole === "OWNER" ||
+    (selectedTeam ? isOrganizationCreator(selectedTeam.organizationId) : false) ||
+    currentTeamMemberRole === "LEAD";
+  const canAddTeamMembers = canManageSelectedTeam || currentOrganizationRole === "ADMIN";
+  const canEditOrganizationMember = (member: OrganizationMember) => {
+    const isCreator = isOrganizationCreator(member.organizationId);
+    return currentUser?.id !== member.userId &&
+      (isCreator || (
+        member.role !== "OWNER" &&
+        member.organization?.createdById !== member.userId &&
+        (currentOrganizationRole === "OWNER" ||
+          (currentOrganizationRole === "ADMIN" && member.role === "MEMBER"))
+      ));
+  };
+  const canEditTeamMember = (member: TeamMember) => {
+    if (!selectedTeam || !currentUser || currentUser.id === member.userId) return false;
+    const creator = isOrganizationCreator(selectedTeam.organizationId);
+    const target = organizationMembers.find((organizationMember) => organizationMember.userId === member.userId);
+    const targetIsCreator = target?.organization?.createdById === member.userId;
+    const targetIsOwner = target?.role === "OWNER";
+    if (creator) return true;
+    if (targetIsCreator || targetIsOwner) return false;
+    if (currentOrganizationRole === "OWNER") return true;
+    return currentTeamMemberRole === "LEAD" && member.role === "MEMBER";
+  };
+
+  const canManageTeams = currentOrganizationRole === "OWNER" ||
+    isOrganizationCreator(organizationId);
+  const canCreateTeams = canManageTeams || currentOrganizationRole === "ADMIN";
+  const assignedTeamMemberIds = new Set(teams.flatMap((team) => (team.members ?? []).map((member) => member.userId)));
+  const unassignedOrganizationMembers = organizationMembers.filter((member) => !assignedTeamMemberIds.has(member.userId));
+  const totalChatUnread = chatConversations.reduce((total, conversation) => total + conversation.unreadCount, 0);
+  const chatVisibleConversations = chatConversations.filter((conversation) => {
+    const name = conversation.type === "TEAM"
+      ? conversation.team?.name ?? "Team channel"
+      : conversation.title ?? conversation.members.find((member) => member.id !== currentUser?.id)?.name ?? "Direct message";
+    return `${name} ${conversation.lastMessage?.content ?? ""}`.toLowerCase().includes(chatSearch.trim().toLowerCase());
+  });
+  const chatVisibleMembers = organizationMembers
+    .filter((member) => member.user && member.userId !== currentUser?.id)
+    .filter((member) => `${member.user?.name ?? ""} ${member.user?.email ?? ""}`.toLowerCase().includes(chatSearch.trim().toLowerCase()));
+  const chatVisibleTeams = teams.filter((team) => team.members?.some((member) => member.userId === currentUser?.id));
+  const organizationMemberPriority = (member: OrganizationMember) => {
+    if (member.organization?.createdById === member.userId) return 0;
+    if (member.role === "OWNER") return 1;
+    if (member.role === "ADMIN") return 2;
+    return 3;
+  };
+  const teamMemberPriority = (member: TeamMember) => {
+    const organizationMember = organizationMembers.find((item) => item.userId === member.userId);
+    if (organizationMember?.organization?.createdById === member.userId) return 0;
+    if (organizationMember?.role === "OWNER") return 1;
+    if (organizationMember?.role === "ADMIN") return 2;
+    if (member.role === "LEAD") return 3;
+    return 4;
+  };
 
   if (!token) {
     return <Login onLogin={handleLogin} />;
+  }
+
+  if (showOnboarding || !localStorage.getItem("organizationId")) {
+    return <OrganizationOnboarding token={token} onLogout={handleLogout} />;
   }
 
   return (
@@ -2124,6 +2751,7 @@ function App() {
             ["entities", "Entities", "entities"],
             ["relationships", "Relationships", "relationships"],
             ["teams", "Teams", "teams"],
+            ["chat", "Chat", "chat"],
             ["members", "Members", "members"],
             ["incidents", "Incidents", "incidents"],
             ["simulation", "Simulation", "simulation"],
@@ -2142,11 +2770,53 @@ function App() {
                 <NavIcon name={icon as NavIconName} />
               </span>
               <span className="nav-item-label">{label}</span>
+              {key === "chat" && totalChatUnread > 0 && <span className="nav-chat-unread">{totalChatUnread > 9 ? "9+" : totalChatUnread}</span>}
             </button>
           ))}
         </nav>
 
         <div className="header-account" ref={profileMenuRef}>
+          {currentUser?.memberships?.some((membership) => membership.role === "OWNER") && (
+            <div className="notification-control">
+              <button
+                type="button"
+                className={`notification-button ${notificationOpen ? "open" : ""}`}
+                aria-label={`Approval requests${approvalRequests.length ? `, ${approvalRequests.length} pending` : ""}`}
+                aria-expanded={notificationOpen}
+                onClick={() => setNotificationOpen((open) => !open)}
+              >
+                <svg width="19" height="19" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+                  <path d="M18 8a6 6 0 0 0-12 0c0 7-3 7-3 9h18c0-2-3-2-3-9" />
+                  <path d="M10 21h4" />
+                </svg>
+                {approvalRequests.length > 0 && <span className="notification-badge">{approvalRequests.length > 9 ? "9+" : approvalRequests.length}</span>}
+              </button>
+              {notificationOpen && (
+                <div className="approval-notification-menu">
+                  <div className="approval-notification-heading">
+                    <strong>Join requests</strong>
+                    <span>{approvalRequests.length} pending</span>
+                  </div>
+                  {notificationError && <div className="approval-notification-error">{notificationError}</div>}
+                  {approvalRequests.length === 0 ? (
+                    <div className="approval-notification-empty">No approval requests right now.</div>
+                  ) : approvalRequests.map((request) => (
+                    <div className="approval-notification-item" key={request.id}>
+                      <div className="approval-notification-copy">
+                        <strong>{request.user?.name || "Someone"}</strong>
+                        <span>{request.user?.email || ""}</span>
+                        <small>Request to join {request.organizationName}</small>
+                      </div>
+                      <div className="approval-notification-actions">
+                        <button type="button" disabled={approvalActionId === request.id} onClick={() => void reviewApprovalRequest(request, "APPROVED")}>Approve</button>
+                        <button type="button" className="reject" disabled={approvalActionId === request.id} onClick={() => void reviewApprovalRequest(request, "REJECTED")}>Reject</button>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+          )}
           <div className="header-divider" />
           <button
             type="button"
@@ -2164,27 +2834,62 @@ function App() {
             </svg>
           </button>
 
-          {profileMenuOpen && (
-            <div className="profile-menu" role="menu">
+          {profileMenuOpen && createPortal(
+            <div className="profile-menu" ref={profileMenuPanelRef} role="menu">
               <div className="profile-menu-header">
                 <div className="profile-menu-avatar">
                   {(currentUser?.name || "U").trim().charAt(0).toUpperCase()}
                 </div>
                 <div className="profile-menu-identity">
-                  <strong>{currentUser?.name || "User"}</strong>
+                  {profileNameEditing ? (
+                    <form className="profile-name-edit" onSubmit={(event) => void saveProfileName(event)}>
+                      <input
+                        aria-label="Account name"
+                        value={profileNameDraft}
+                        maxLength={100}
+                        autoFocus
+                        disabled={profileNameSaving}
+                        onChange={(event) => setProfileNameDraft(event.target.value)}
+                      />
+                      <button type="submit" aria-label="Save name" disabled={profileNameSaving || profileNameDraft.trim().length < 2}>✓</button>
+                      <button type="button" aria-label="Cancel name edit" disabled={profileNameSaving} onClick={() => { setProfileNameEditing(false); setProfileNameError(""); }}>×</button>
+                    </form>
+                  ) : (
+                    <div className="profile-menu-name-line">
+                      <strong>{currentUser?.name || "User"}</strong>
+                      <button
+                        type="button"
+                        className="profile-name-edit-button"
+                        aria-label="Edit account name"
+                        title="Edit name"
+                        onClick={() => { setProfileNameDraft(currentUser?.name || ""); setProfileNameError(""); setProfileNameEditing(true); }}
+                      >
+                        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+                          <path d="m15 5 4 4"/><path d="M4 20l4.5-1 10-10a2.1 2.1 0 0 0-3-3l-10 10L4 20Z"/><path d="M13.5 6.5l4 4"/>
+                        </svg>
+                      </button>
+                    </div>
+                  )}
                   <span>{currentUser?.email || "No email available"}</span>
+                  {profileNameError && <small className="profile-name-error">{profileNameError}</small>}
                 </div>
               </div>
 
               <div className="profile-menu-section">
-                <span className="profile-menu-label">CURRENT ACCOUNT</span>
-                <div className="profile-account-row">
-                  <div>
-                    <strong>{currentUser?.name || "User"}</strong>
-                    <span>{currentUser?.email || ""}</span>
-                  </div>
-                  <span className="profile-current-badge">Current</span>
-                </div>
+                <button
+                  type="button"
+                  className="profile-workspace"
+                  onClick={() => {
+                    setProfileMenuOpen(false);
+                    setShowOnboarding(true);
+                  }}
+                >
+                  <span className="workspace-dot" />
+                  <span className="profile-workspace-copy">
+                    <strong>Workspace setup & join requests</strong>
+                    <small>Create organizations, share join codes, review requests</small>
+                  </span>
+                </button>
               </div>
 
               <div className="profile-menu-section">
@@ -2192,11 +2897,16 @@ function App() {
                 {(currentUser?.memberships ?? []).map((membership) => (
                   <button
                     type="button"
-                    className={`profile-workspace ${membership.organizationId === ORGANIZATION_ID ? "current" : ""}`}
+                    className={`profile-workspace ${membership.organizationId === organizationId ? "current" : ""}`}
                     key={membership.id}
                     onClick={() => {
-                      setActiveView("dashboard");
                       setProfileMenuOpen(false);
+                      if (membership.organizationId !== organizationId) {
+                        localStorage.setItem("organizationId", membership.organizationId);
+                        window.location.reload();
+                        return;
+                      }
+                      setActiveView("dashboard");
                     }}
                   >
                     <span className="workspace-dot" />
@@ -2204,11 +2914,20 @@ function App() {
                       <strong>{membership.organization?.name || "Organization"}</strong>
                       <small>{membership.role}</small>
                     </span>
-                    {membership.organizationId === ORGANIZATION_ID && (
+                    {membership.organizationId === organizationId && (
                       <span className="profile-check">✓</span>
                     )}
                   </button>
                 ))}
+              </div>
+
+              <div className="profile-appearance">
+                <span className="profile-appearance-label">Appearance</span>
+                <button type="button" className="profile-action appearance-toggle" onClick={() => setTheme((current) => current === "dark" ? "light" : "dark")} aria-label={`Switch to ${theme === "dark" ? "light" : "dark"} theme`}>
+                  <span className="profile-action-icon">{theme === "dark" ? "☼" : "☾"}</span>
+                  <span>{theme === "dark" ? "Light theme" : "Dark theme"}</span>
+                  <span className={`theme-switch ${theme}`} aria-hidden="true"><span /></span>
+                </button>
               </div>
 
               <div className="profile-menu-footer">
@@ -2235,7 +2954,8 @@ function App() {
                   <span>Sign out</span>
                 </button>
               </div>
-            </div>
+            </div>,
+            document.body,
           )}
         </div>
       </header>
@@ -2244,9 +2964,12 @@ function App() {
         {activeView === "dashboard" ? (
           <>
             <section className="stats">
-              <div className="stat-card">
-                <span>Organization</span>
-                <strong>OrgImpact Demo</strong>
+              <div className="stat-card organization-stat">
+                <OrgImpactLogo compact showWordmark={false} className="organization-stat-logo" />
+                <div className="organization-stat-copy">
+                  <span>Organization</span>
+                  <strong>OrgImpact Demo</strong>
+                </div>
               </div>
 
               <div className="stat-card">
@@ -2350,11 +3073,11 @@ function App() {
                         width: "100%",
                         height: "100%",
                       }}
-                      attributionPosition="bottom-left"
+                      proOptions={{ hideAttribution: true }}
                     >
                       <Background gap={24} size={1} />
                       <Controls />
-                      <MiniMap />
+                      <GraphMiniOverview nodes={nodes} edges={edges} />
                     </ReactFlow>
                   )}
                 </div>
@@ -2472,8 +3195,8 @@ function App() {
             <div className="page-header">
               <div>
                 <span className="page-eyebrow">ORGANIZATION</span>
-                <h2>Entities</h2>
-                <p>
+                <div className="page-heading-title"><span className="page-section-logo"><NavIcon name="entities" /></span><h2>Entities</h2></div>
+                <p className="page-header-description">
                   Manage the systems, services, databases and infrastructure
                   represented in your dependency graph.
                 </p>
@@ -2607,8 +3330,8 @@ function App() {
             <div className="page-header">
               <div>
                 <span className="page-eyebrow">DEPENDENCY GRAPH</span>
-                <h2>Relationships</h2>
-                <p>
+                <div className="page-heading-title"><span className="page-section-logo"><NavIcon name="relationships" /></span><h2>Relationships</h2></div>
+                <p className="page-header-description">
                   Define how entities depend on, call, use, run on, or contain one another.
                 </p>
               </div>
@@ -2703,7 +3426,7 @@ function App() {
         ) : activeView === "incidents" ? (
           <section className="incidents-page">
             <div className="page-header">
-              <div><span className="page-eyebrow">OPERATIONS</span><h2>Incidents</h2><p>Track failures and understand their dependency blast radius.</p></div>
+              <div><span className="page-eyebrow">OPERATIONS</span><div className="page-heading-title"><span className="page-section-logo"><NavIcon name="incidents" /></span><h2>Incidents</h2></div><p className="page-header-description">Track failures and understand their dependency blast radius.</p></div>
               <button className="primary-button" onClick={openCreateIncident} disabled={!graph?.nodes.length}>+ Create Incident</button>
             </div>
             {incidentError && !incidentModalOpen && <div className="page-error">{incidentError}</div>}
@@ -2731,8 +3454,8 @@ function App() {
             <div className="page-header">
               <div>
                 <span className="page-eyebrow">WHAT-IF ANALYSIS</span>
-                <h2>Change Simulation</h2>
-                <p>
+                <div className="page-heading-title"><span className="page-section-logo"><NavIcon name="simulation" /></span><h2>Change Simulation</h2></div>
+                <p className="page-header-description">
                   Select a system to automatically simulate a change or outage and see
                   which downstream systems could be affected.
                 </p>
@@ -2862,15 +3585,6 @@ function App() {
                   )}
                 </div>
 
-                <div className="simulation-explanation">
-                  <strong>What will happen?</strong>
-                  <p>
-                    Select any system above. OrgImpact automatically
-                    traverses its dependency graph and estimates the systems
-                    that could be affected by a change or outage.
-                  </p>
-                </div>
-
                 {simulationError && (
                   <div className="form-error">{simulationError}</div>
                 )}
@@ -2983,16 +3697,91 @@ function App() {
                       )}
                     </div>
 
-                    <div className="simulation-warning">
-                      <strong>Simulation only</strong>
-                      <span>
-                        This analysis does not modify your graph or production
-                        systems. It estimates impact using the dependency
-                        relationships currently recorded in OrgImpact.
-                      </span>
-                    </div>
                   </>
                 )}
+              </section>
+            </div>
+          </section>
+        ) : activeView === "chat" ? (
+          <section className="chat-page">
+            <div className="page-header chat-page-header">
+              <div>
+                <span className="page-eyebrow">ORGIMPACT MESSAGING</span>
+                <div className="page-heading-title"><span className="page-section-logo"><NavIcon name="chat" /></span><h2>Chat</h2></div>
+                <p className="page-header-description">Talk with organization members and teams in real time.</p>
+              </div>
+              <span className={`chat-connection-status ${chatConnected ? "connected" : "disconnected"}`}><i />{chatConnected ? "Connected" : "Disconnected"}</span>
+            </div>
+            {chatError && <div className="page-error chat-page-error">{chatError}</div>}
+            <div className={`chat-layout ${chatMobileOpen ? "mobile-chat-open" : ""}`}>
+              <aside className="chat-sidebar">
+                <label className="chat-search"><span aria-hidden="true">⌕</span><input value={chatSearch} onChange={(event) => setChatSearch(event.target.value)} placeholder="Search people and conversations" aria-label="Search people and conversations" /></label>
+                <section className="chat-sidebar-section">
+                  <div className="chat-sidebar-heading"><h3>Conversations</h3>{chatConversationsLoading && <span className="chat-small-loader" />}</div>
+                  {chatVisibleConversations.length === 0 && !chatConversationsLoading ? <p className="chat-sidebar-empty">No conversations yet. Start one below.</p> : chatVisibleConversations.map((conversation) => {
+                    const peer = conversation.members.find((member) => member.id !== currentUser?.id);
+                    const label = conversation.type === "TEAM" ? conversation.team?.name ?? "Team channel" : conversation.title ?? peer?.name ?? "Direct message";
+                    return (
+                      <button type="button" key={conversation.id} className={`chat-conversation-item ${selectedChatConversation?.id === conversation.id ? "active" : ""}`} onClick={() => void openChatConversation(conversation)}>
+                        <span className={`chat-avatar ${conversation.type === "TEAM" ? "team" : ""}`}>{label.slice(0, 1).toUpperCase()}</span>
+                        <span className="chat-conversation-copy"><strong>{label}</strong><small>{conversation.lastMessage ? `${conversation.lastMessage.sender.name}: ${conversation.lastMessage.content}` : conversation.type === "TEAM" ? "Team channel" : "Start the conversation"}</small></span>
+                        {conversation.unreadCount > 0 && <span className="chat-unread-count">{conversation.unreadCount > 9 ? "9+" : conversation.unreadCount}</span>}
+                      </button>
+                    );
+                  })}
+                </section>
+                {chatVisibleTeams.length > 0 && (
+                  <section className="chat-sidebar-section">
+                    <div className="chat-sidebar-heading"><h3>Team channels</h3></div>
+                    {chatVisibleTeams.filter((team) => `${team.name} ${team.slug}`.toLowerCase().includes(chatSearch.trim().toLowerCase())).map((team) => {
+                      const existing = chatConversations.find((conversation) => conversation.teamId === team.id);
+                      return <button type="button" key={team.id} className={`chat-conversation-item ${selectedChatConversation?.id === existing?.id ? "active" : ""}`} onClick={() => existing ? void openChatConversation(existing) : void openTeamChat(team)}><span className="chat-avatar team">#</span><span className="chat-conversation-copy"><strong>{team.name}</strong><small>{existing?.lastMessage?.content ?? "Open team channel"}</small></span></button>;
+                    })}
+                  </section>
+                )}
+                <section className="chat-sidebar-section chat-people-section">
+                  <div className="chat-sidebar-heading"><h3>Organization members</h3>{membersLoading && <span className="chat-small-loader" />}</div>
+                  {chatVisibleMembers.length === 0 && !membersLoading ? <p className="chat-sidebar-empty">No matching members.</p> : chatVisibleMembers.map((member) => {
+                    const user = member.user!;
+                  return <button type="button" key={member.userId} className="chat-person-item" onClick={() => void startDirectChat({ id: member.userId, name: user.name, email: user.email })}><span className="chat-avatar">{user.name.slice(0, 1).toUpperCase()}</span><span className="chat-conversation-copy"><strong>{user.name}</strong><small>{user.email}</small></span></button>;
+                  })}
+                </section>
+              </aside>
+
+              <section className="chat-window">
+                {!selectedChatConversation ? (
+                  <div className="chat-empty-state"><span className="chat-empty-icon"><NavIcon name="chat" /></span><h3>Your conversations</h3><p>Select a conversation or choose an organization member to send a direct message.</p></div>
+                ) : (() => {
+                  const peer = selectedChatConversation.members.find((member) => member.id !== currentUser?.id);
+                  const conversationName = selectedChatConversation.type === "TEAM" ? selectedChatConversation.team?.name ?? "Team channel" : selectedChatConversation.title ?? peer?.name ?? "Direct message";
+                  const latestOwnMessageId = [...chatMessages].reverse().find((message) => message.senderId === currentUser?.id)?.id;
+                  const lastReadAt = chatReadAtByConversation[selectedChatConversation.id];
+                  return (
+                    <>
+                      <header className="chat-conversation-header">
+                        <button type="button" className="chat-back-button" onClick={() => setChatMobileOpen(false)} aria-label="Back to conversations">←</button>
+                        <span className={`chat-avatar ${selectedChatConversation.type === "TEAM" ? "team" : ""}`}>{conversationName.slice(0, 1).toUpperCase()}</span>
+                        <div><strong>{conversationName}</strong><small>{selectedChatConversation.type === "TEAM" ? `${selectedChatConversation.members.length} team members` : peer?.email ?? "Direct conversation"}</small></div>
+                      </header>
+                      <div className="chat-message-history">
+                        {chatHasOlder && <button type="button" className="chat-load-older" disabled={chatLoading} onClick={() => chatMessages[0] && void loadChatMessages(selectedChatConversation.id, chatMessages[0].id)}>{chatLoading ? "Loading…" : "Load older messages"}</button>}
+                        {chatLoading && chatMessages.length === 0 && <div className="chat-history-empty">Loading messages…</div>}
+                        {!chatLoading && chatMessages.length === 0 && <div className="chat-history-empty">No messages yet. Say hello to start the conversation.</div>}
+                        {chatMessages.map((message) => {
+                          const own = message.senderId === currentUser?.id;
+                          const wasRead = own && message.id === latestOwnMessageId && lastReadAt && new Date(lastReadAt) >= new Date(message.createdAt);
+                          return <div className={`chat-message-row ${own ? "own" : ""}`} key={message.id}><span className="chat-message-avatar">{message.sender.name.slice(0, 1).toUpperCase()}</span><div className="chat-message-content"><div className="chat-message-meta"><strong>{own ? "You" : message.sender.name}</strong><time dateTime={message.createdAt}>{new Date(message.createdAt).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" })}</time></div><p>{message.content}</p>{wasRead && <small className="chat-seen-label">Seen</small>}</div></div>;
+                        })}
+                        {chatTypingUser && <div className="chat-typing-indicator">{chatTypingUser} is typing<span>•••</span></div>}
+                        <div ref={chatBottomRef} />
+                      </div>
+                      <form className="chat-composer" onSubmit={(event) => void sendChatMessage(event)}>
+                        <textarea value={chatMessageText} onChange={(event) => { setChatMessageText(event.target.value); if (socket.connected) socket.emit("chat:typing", selectedChatConversation.id); }} onKeyDown={(event) => { if (event.key === "Enter" && !event.shiftKey) { event.preventDefault(); event.currentTarget.form?.requestSubmit(); } }} placeholder={chatConnected ? "Write a message…" : "Reconnect to send a message"} maxLength={4000} disabled={!chatConnected} aria-label="Write a message" />
+                        <div className="chat-composer-footer"><span>{chatMessageText.length}/4000 · Enter to send</span><button type="submit" className="primary-button" disabled={!chatMessageText.trim() || chatSending || !chatConnected}>{chatSending ? "Sending…" : "Send"}<span aria-hidden="true">↗</span></button></div>
+                      </form>
+                    </>
+                  );
+                })()}
               </section>
             </div>
           </section>
@@ -3001,13 +3790,11 @@ function App() {
             <div className="page-header">
               <div>
                 <span className="page-eyebrow">ORGANIZATION ACCESS</span>
-                <h2>Members &amp; Roles</h2>
-                <p>Manage organization membership and assign OWNER, ADMIN, or MEMBER roles.</p>
+                <div className="page-heading-title"><span className="page-section-logo"><NavIcon name="members" /></span><h2>Members &amp; Roles</h2></div>
+                <p className="page-header-description">Manage organization membership and assign OWNER, ADMIN, or MEMBER roles.</p>
               </div>
 
-              {(currentUser && ["OWNER", "ADMIN"].includes(
-                organizationMembers.find((member) => member.userId === currentUser.id)?.role ?? "",
-              )) && (
+              {(currentUser && organizationMembers.find((member) => member.userId === currentUser.id)?.role === "OWNER") && (
                 <button className="primary-button" onClick={openAddOrganizationMember}>
                   + Add Member
                 </button>
@@ -3056,95 +3843,133 @@ function App() {
                 </div>
               ) : (
                 <div className="organization-member-list">
-                  {organizationMembers.map((member) => (
+                  {[...organizationMembers].sort((left, right) => organizationMemberPriority(left) - organizationMemberPriority(right)).map((member) => {
+                    const displayRole = member.organization?.createdById === member.userId ? "CREATOR" : member.role;
+                    return (
                     <div className="organization-member-row" key={member.id}>
-                      <div className="member-avatar">
-                        {(member.user?.name ?? "U").slice(0, 1).toUpperCase()}
+                      <div className="organization-member-identity">
+                        <div className="member-avatar">
+                          {(member.user?.name ?? "U").slice(0, 1).toUpperCase()}
+                        </div>
+                        <div className="member-main">
+                          <strong>
+                            {member.user?.name ?? `User ${member.userId.slice(0, 8)}`}
+                            {currentUser?.id === member.userId && <span className="you-badge">YOU</span>}
+                          </strong>
+                          <span>{member.user?.email ?? "No email available"}</span>
+                        </div>
+                        <div className="organization-member-role-stack">
+                          <span className={`organization-role-badge ${displayRole.toLowerCase()}`}>{displayRole}</span>
+                          <span className="member-since">{member.createdAt ? new Date(member.createdAt).toLocaleDateString() : ""}</span>
+                        </div>
                       </div>
-                      <div className="member-main">
-                        <strong>
-                          {member.user?.name ?? `User ${member.userId.slice(0, 8)}`}
-                          {currentUser?.id === member.userId && <span className="you-badge">YOU</span>}
-                        </strong>
-                        <span>{member.user?.email ?? "No email available"}</span>
-                      </div>
-                      <span className={`organization-role-badge ${member.role.toLowerCase()}`}>
-                        {member.role}
-                      </span>
-                      <span className="member-since">
-                        {member.createdAt ? new Date(member.createdAt).toLocaleDateString() : ""}
-                      </span>
+                      <div className="member-row-actions">
                       {canEditOrganizationMember(member) && (
-                        <div className="member-row-actions">
+                        <>
                           <button type="button" className="table-button" onClick={() => openEditOrganizationMember(member)}>Edit role</button>
                           <button type="button" className="table-button danger" onClick={() => void removeOrganizationMember(member)}>Remove</button>
-                        </div>
+                        </>
                       )}
+                      </div>
                     </div>
-                  ))}
+                    );
+                  })}
                 </div>
               )}
             </section>
 
-            <div className="rbac-note">
-              <strong>RBAC</strong>
-              <span>OWNER has full organization control. ADMIN can manage teams and memberships. MEMBER has standard access.</span>
-            </div>
           </section>
         ) : (
           <section className="teams-page">
             <div className="page-header">
               <div>
-                <span className="page-eyebrow">ORGANIZATION</span>
-                <h2>Teams</h2>
-                <p>Organize members into focused teams and manage team membership.</p>
+                <span className="page-eyebrow">ORGANIZATION OPERATIONS</span>
+                <div className="page-heading-title"><span className="page-section-logo"><NavIcon name="teams" /></span><h2>Teams</h2></div>
+                <p className="page-header-description">Understand team membership, leadership, and operational coverage across your organization.</p>
               </div>
 
-              <button className="primary-button" onClick={openCreateTeam}>
-                + Create Team
-              </button>
+              {canCreateTeams && (
+                <button className="primary-button" onClick={openCreateTeam}>
+                  + Create Team
+                </button>
+              )}
             </div>
 
             {teamError && !teamModalOpen && !memberModalOpen && (
               <div className="page-error">{teamError}</div>
             )}
 
+            <div className="teams-overview" aria-label="Team summary">
+              <div className="team-overview-stat"><span>Total teams</span><strong>{teamsLoading ? "—" : teams.length}</strong></div>
+              <div className="team-overview-stat"><span>Assigned memberships</span><strong>{teamsLoading ? "—" : teams.reduce((total, team) => total + (team.members?.length ?? 0), 0)}</strong></div>
+              <div className="team-overview-stat"><span>Teams with a lead</span><strong>{teamsLoading ? "—" : teams.filter((team) => team.members?.some((member) => member.role === "LEAD")).length}</strong></div>
+              <div className="team-overview-stat"><span>Unassigned organization members</span><strong>{membersLoading ? "—" : unassignedOrganizationMembers.length}</strong></div>
+            </div>
+
             <div className="teams-layout">
               <section className="teams-list-panel">
                 <div className="section-heading-row">
                   <div>
-                    <span className="page-eyebrow">YOUR TEAMS</span>
-                    <h3>{teams.length} Teams</h3>
+                    <span className="page-eyebrow">TEAM DIRECTORY</span>
+                    <h3>{teams.length} {teams.length === 1 ? "team" : "teams"}</h3>
                   </div>
                   {teamsLoading && <span className="loading-text">Loading...</span>}
                 </div>
+
+                <p className="team-filter-note">Entity ownership and dependency risk are not tracked for teams yet.</p>
 
                 {!teamsLoading && teams.length === 0 ? (
                   <div className="empty-management">
                     <div className="empty-management-icon">T</div>
                     <h3>No teams yet</h3>
-                    <p>Create your first team to start organizing members.</p>
-                    <button className="primary-button" onClick={openCreateTeam}>
-                      Create Team
-                    </button>
+                    <p>Teams will appear here once they are created in this organization.</p>
+                    {canCreateTeams && <button className="primary-button" onClick={openCreateTeam}>Create Team</button>}
                   </div>
                 ) : (
                   <div className="team-card-list">
-                    {teams.map((team) => (
-                      <button
-                        key={team.id}
-                        className={`team-card ${selectedTeam?.id === team.id ? "active" : ""}`}
-                        onClick={() => selectTeam(team)}
-                      >
-                        <div className="team-avatar">{team.name.slice(0, 1).toUpperCase()}</div>
-                        <div className="team-card-main">
-                          <strong>{team.name}</strong>
-                          <span>{team.slug}</span>
-                        </div>
-                        <div className="team-card-arrow">→</div>
-                      </button>
-                    ))}
+                    {teams.map((team) => {
+                      const lead = team.members?.find((member) => member.role === "LEAD");
+                      const teamMemberCount = team.members?.length ?? 0;
+                      return (
+                        <button
+                          key={team.id}
+                          className={`team-card ${selectedTeam?.id === team.id ? "active" : ""}`}
+                          onClick={() => selectTeam(team)}
+                          aria-pressed={selectedTeam?.id === team.id}
+                        >
+                          <div className="team-avatar">{team.name.slice(0, 1).toUpperCase()}</div>
+                          <div className="team-card-main">
+                            <strong>{team.name}</strong>
+                            <span>/{team.slug}</span>
+                            <small>{lead ? `Lead: ${lead.user?.name ?? "Organization member"}` : "No lead assigned"}</small>
+                          </div>
+                          <div className="team-card-meta">
+                            <div className="team-member-avatars" aria-label={`${teamMemberCount} team members`}>
+                              {(team.members ?? []).slice(0, 4).map((member) => <span key={member.id} title={member.user?.name ?? "Member"}>{(member.user?.name ?? "U").slice(0, 1).toUpperCase()}</span>)}
+                              {teamMemberCount > 4 && <span className="team-avatar-overflow">+{teamMemberCount - 4}</span>}
+                            </div>
+                            <span className="team-member-count">{teamMemberCount} {teamMemberCount === 1 ? "member" : "members"}</span>
+                          </div>
+                          <div className="team-card-arrow" aria-hidden="true">→</div>
+                        </button>
+                      );
+                    })}
                   </div>
+                )}
+
+                {!teamsLoading && unassignedOrganizationMembers.length > 0 && (
+                  <section className="unassigned-members-section">
+                    <div className="unassigned-heading"><div><span className="page-eyebrow">ORGANIZATION COVERAGE</span><h4>Not assigned to a team</h4></div><strong>{unassignedOrganizationMembers.length}</strong></div>
+                    <div className="unassigned-member-list">
+                      {unassignedOrganizationMembers.slice(0, 6).map((member) => (
+                        <div className="unassigned-member" key={member.id}>
+                          <span className="unassigned-avatar">{(member.user?.name ?? "U").slice(0, 1).toUpperCase()}</span>
+                          <span><strong>{member.user?.name ?? "Organization member"}</strong><small>{member.user?.email ?? member.role}</small></span>
+                        </div>
+                      ))}
+                      {unassignedOrganizationMembers.length > 6 && <p className="unassigned-overflow">and {unassignedOrganizationMembers.length - 6} more</p>}
+                    </div>
+                  </section>
                 )}
               </section>
 
@@ -3161,17 +3986,21 @@ function App() {
                       <div>
                         <span className="page-eyebrow">TEAM</span>
                         <h2>{selectedTeam.name}</h2>
-                        <p>/{selectedTeam.slug}</p>
+                        <p>/{selectedTeam.slug} · Created {selectedTeam.createdAt ? new Date(selectedTeam.createdAt).toLocaleDateString() : "date unavailable"}</p>
                       </div>
-                      <button className="secondary-button" onClick={openAddMember}>
-                        + Add Member
-                      </button>
+                      <div className="team-detail-actions">
+                        {canManageTeams && <><button className="secondary-button" onClick={() => openEditTeam(selectedTeam)}>Edit team</button><button className="table-button danger" onClick={() => removeTeam(selectedTeam)}>Delete</button></>}
+                        {canAddTeamMembers && <button className="primary-button" onClick={openAddMember}>+ Add Member</button>}
+                      </div>
                     </div>
 
-                    <div className="team-member-summary">
-                      <strong>{teamMembers.length}</strong>
-                      <span>members</span>
+                    <div className="team-overview-details">
+                      <div><span>Team lead</span><strong>{teamMembers.find((member) => member.role === "LEAD")?.user?.name ?? "No lead assigned"}</strong></div>
+                      <div><span>Members</span><strong>{teamMembers.length}</strong></div>
+                      <div><span>Your organization role</span><strong>{currentOrganizationRole || "Member"}</strong></div>
                     </div>
+
+                    <div className="team-members-section-heading"><div><span className="page-eyebrow">TEAM ROSTER</span><h3>Members</h3></div><span>{teamMembers.length} total</span></div>
 
                     {teamMembersLoading ? (
                       <div className="team-loading"><div className="small-loader" /> Loading members...</div>
@@ -3179,20 +4008,35 @@ function App() {
                       <div className="empty-management">
                         <h3>No members yet</h3>
                         <p>Add a user to this team to get started.</p>
-                        <button className="primary-button" onClick={openAddMember}>
-                          Add Member
-                        </button>
+                        {canAddTeamMembers && <button className="primary-button" onClick={openAddMember}>Add Member</button>}
                       </div>
                     ) : (
                       <div className="team-members-list">
-                        {teamMembers.map((member) => (
+                        {[...teamMembers].sort((left, right) => teamMemberPriority(left) - teamMemberPriority(right)).map((member) => {
+                          const organizationMember = organizationMembers.find((item) => item.userId === member.userId);
+                          const displayRole = organizationMember?.organization?.createdById === member.userId
+                            ? "CREATOR"
+                            : organizationMember?.role === "OWNER"
+                              ? "OWNER"
+                              : organizationMember?.role === "ADMIN"
+                                ? "ADMIN"
+                                : member.role === "LEAD"
+                                  ? "LEAD"
+                                  : "MEMBER";
+                          return (
                           <div className="team-member-row" key={member.id}>
-                            <div className="member-avatar">{(member.user?.name ?? "U").slice(0, 1).toUpperCase()}</div>
-                            <div className="member-main">
-                              <strong>{member.user?.name ?? `User ${member.userId.slice(0, 8)}`}</strong>
-                              <span>{member.user?.email ?? "Member"}</span>
+                            <div className="team-member-identity">
+                              <div className="member-avatar">{(member.user?.name ?? "U").slice(0, 1).toUpperCase()}</div>
+                              <div className="member-main">
+                                <strong>{member.user?.name ?? `User ${member.userId.slice(0, 8)}`}</strong>
+                                <span>{member.user?.email ?? "Member"}</span>
+                              </div>
+                              <div className="team-member-role-stack">
+                                <div className="team-role-badges">
+                                  <span className={`role-badge ${displayRole.toLowerCase()}`}>{displayRole}</span>
+                                </div>
+                              </div>
                             </div>
-                            <span className="role-badge">{member.role}</span>
                             {canEditTeamMember(member) && (
                               <div className="member-row-actions">
                                 <button type="button" className="table-button" onClick={() => openEditTeamMember(member)}>Edit role</button>
@@ -3200,7 +4044,8 @@ function App() {
                               </div>
                             )}
                           </div>
-                        ))}
+                        );
+                        })}
                       </div>
                     )}
                   </>
@@ -3356,8 +4201,8 @@ function App() {
           <div className="entity-modal" onMouseDown={(event) => event.stopPropagation()}>
             <div className="modal-header">
               <div>
-                <span className="page-eyebrow">NEW TEAM</span>
-                <h2>Create Team</h2>
+                <span className="page-eyebrow">TEAM SETTINGS</span>
+                <h2>{editingTeam ? "Edit Team" : "Create Team"}</h2>
               </div>
               <button className="modal-close" onClick={closeTeamModal} disabled={teamSaving}>×</button>
             </div>
@@ -3372,7 +4217,7 @@ function App() {
                     setTeamForm((current) => ({
                       ...current,
                       name,
-                      slug: current.slug || name.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/(^-|-$)/g, ""),
+                      slug: !editingTeam && current.slug === "" ? name.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/(^-|-$)/g, "") : current.slug,
                     }));
                   }}
                   placeholder="e.g. Engineering"
@@ -3387,7 +4232,7 @@ function App() {
                   onChange={(event) => setTeamForm((current) => ({ ...current, slug: event.target.value.toLowerCase().replace(/[^a-z0-9-]/g, "-") }))}
                   placeholder="engineering"
                 />
-                <small>Used as the unique team identifier inside the organization.</small>
+                <small>Unique within this organization. Team descriptions and initial lead assignment are not part of the current data model.</small>
               </label>
 
               {teamError && <div className="form-error">{teamError}</div>}
@@ -3396,7 +4241,7 @@ function App() {
             <div className="modal-footer">
               <button className="secondary-button" onClick={closeTeamModal} disabled={teamSaving}>Cancel</button>
               <button className="primary-button" onClick={() => void saveTeam()} disabled={teamSaving}>
-                {teamSaving ? "Creating..." : "Create Team"}
+                {teamSaving ? "Saving..." : editingTeam ? "Save Changes" : "Create Team"}
               </button>
             </div>
           </div>
@@ -3419,20 +4264,20 @@ function App() {
                 <span>User</span>
                 <select
                   value={memberForm.userId}
-                  disabled={Boolean(editingTeamMember) || memberSaving || usersLoading}
+                  disabled={Boolean(editingTeamMember) || memberSaving || membersLoading}
                   onChange={(event) => setMemberForm((current) => ({ ...current, userId: event.target.value }))}
                 >
-                  <option value="">{usersLoading ? "Loading users..." : "Select a user"}</option>
+                  <option value="">{membersLoading ? "Loading organization members..." : "Select an organization member"}</option>
                   {editingTeamMember?.user && (
                     <option value={editingTeamMember.userId}>
                       {editingTeamMember.user.name} — {editingTeamMember.user.email}
                     </option>
                   )}
-                  {users
-                    .filter((user) => !teamMembers.some((member) => member.userId === user.id))
-                    .map((user) => (
-                      <option key={user.id} value={user.id}>
-                        {user.name} — {user.email}
+                  {organizationMembers
+                    .filter((organizationMember) => organizationMember.user && !teamMembers.some((member) => member.userId === organizationMember.userId))
+                    .map((organizationMember) => (
+                      <option key={organizationMember.userId} value={organizationMember.userId}>
+                        {organizationMember.user!.name} — {organizationMember.user!.email}
                       </option>
                     ))}
                 </select>
@@ -3446,7 +4291,7 @@ function App() {
                   onChange={(event) => setMemberForm((current) => ({ ...current, role: event.target.value }))}
                 >
                   <option value="MEMBER">MEMBER</option>
-                  <option value="LEAD">LEAD</option>
+                {selectedTeam && canManageSelectedTeam && <option value="LEAD">LEAD</option>}
                 </select>
               </label>
 
@@ -3455,7 +4300,7 @@ function App() {
 
             <div className="modal-footer">
               <button className="secondary-button" onClick={closeMemberModal} disabled={memberSaving}>Cancel</button>
-              <button className="primary-button" onClick={() => void saveTeamMember()} disabled={memberSaving || usersLoading}>
+              <button className="primary-button" onClick={() => void saveTeamMember()} disabled={memberSaving || membersLoading}>
                 {memberSaving ? (editingTeamMember ? "Saving..." : "Adding...") : (editingTeamMember ? "Save Role" : "Add Member")}
               </button>
             </div>
@@ -3487,7 +4332,7 @@ function App() {
                 >
                   <option value="MEMBER">MEMBER</option>
                   <option value="ADMIN">ADMIN</option>
-                  <option value="OWNER">OWNER</option>
+                  {isOrganizationCreator(editingMembership.organizationId) && <option value="OWNER">OWNER</option>}
                 </select>
               </label>
               {membersError && <div className="form-error">{membersError}</div>}
@@ -3507,20 +4352,20 @@ function App() {
           <div className="entity-modal membership-modal invitation-modal" onMouseDown={(event) => event.stopPropagation()}>
             <div className="modal-header">
               <div>
-                <span className="page-eyebrow">ORGANIZATION INVITATION</span>
-                <h2>{invitationLink ? "Invitation Ready" : "Invite Member"}</h2>
+                <span className="page-eyebrow">ADD ORGANIZATION MEMBER</span>
+                <h2>{membershipJoinCode ? "Share the join code" : "Add a member"}</h2>
               </div>
               <button className="modal-close" onClick={closeMembershipModal} disabled={membershipSaving}>×</button>
             </div>
 
-            {!invitationLink ? (
+            {!membershipJoinCode ? (
               <>
                 <div className="modal-body">
                   <div className="invitation-intro">
-                    <div className="invitation-intro-icon">✉</div>
+                    <div className="invitation-intro-icon">＋</div>
                     <div>
-                      <strong>Invite someone to your organization</strong>
-                      <p>They will create their own password when they accept the invitation.</p>
+                      <strong>Add an existing OrgImpact account</strong>
+                      <p>Enter the email used for their account. New users can join with the organization code after signing up.</p>
                     </div>
                   </div>
 
@@ -3536,29 +4381,13 @@ function App() {
                     />
                   </label>
 
-                  <label className="form-field">
-                    <span>Organization Role</span>
-                    <select
-                      value={membershipForm.role}
-                      disabled={membershipSaving}
-                      onChange={(event) => setMembershipForm((current) => ({ ...current, role: event.target.value }))}
-                    >
-                      <option value="MEMBER">MEMBER</option>
-                      <option value="ADMIN">ADMIN</option>
-                      {organizationMembers.find((member) => member.userId === currentUser?.id)?.role === "OWNER" && (
-                        <option value="OWNER">OWNER</option>
-                      )}
-                    </select>
-                    <small>The invited person chooses their own password during setup.</small>
-                  </label>
-
                   {membersError && <div className="form-error">{membersError}</div>}
                 </div>
 
                 <div className="modal-footer">
                   <button className="secondary-button" onClick={closeMembershipModal} disabled={membershipSaving}>Cancel</button>
                   <button className="primary-button" onClick={() => void saveOrganizationMember()} disabled={membershipSaving}>
-                    {membershipSaving ? "Creating invitation..." : "Create Invitation"}
+                    {membershipSaving ? "Adding member..." : "Add member"}
                   </button>
                 </div>
               </>
@@ -3566,24 +4395,24 @@ function App() {
               <>
                 <div className="modal-body">
                   <div className="invitation-success">
-                    <div className="invitation-success-icon">✓</div>
-                    <h3>Invitation created</h3>
-                    <p>Share this secure invitation link with the new member.</p>
+                    <div className="invitation-success-icon">↗</div>
+                    <h3>No account found for this email</h3>
+                    <p>Share this organization code. They can sign up, then request to join; an owner can approve the request.</p>
                   </div>
 
                   <div className="invitation-link-box">
-                    <span>{invitationLink}</span>
+                    <span>{membershipJoinCode}</span>
                     <button
                       type="button"
                       className="secondary-button invitation-copy-button"
-                      onClick={() => void navigator.clipboard.writeText(invitationLink)}
+                      onClick={() => void navigator.clipboard.writeText(membershipJoinCode)}
                     >
-                      Copy Link
+                      Copy code
                     </button>
                   </div>
 
                   <div className="invitation-note">
-                    The link expires automatically and can only be used once. The recipient will set their own password.
+                    Join requests remain pending until an organization owner approves them.
                   </div>
                 </div>
 
