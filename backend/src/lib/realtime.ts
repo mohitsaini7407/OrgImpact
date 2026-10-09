@@ -47,10 +47,6 @@ export async function subscribeToRealtimeEvents() {
           realtimeEvent.event,
           realtimeEvent.data,
         );
-
-        console.log(
-          `Realtime event broadcast: ${realtimeEvent.event}`,
-        );
       } catch (error) {
         console.error(
           "Failed to process realtime event:",

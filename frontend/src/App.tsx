@@ -42,6 +42,7 @@ type GraphNode = {
   name: string;
   description: string | null;
   entityType: string;
+  entityTypeColor?: string;
   criticality: "LOW" | "MEDIUM" | "HIGH" | "CRITICAL";
 };
 
@@ -164,7 +165,17 @@ type GraphResponse = {
 type EntityType = {
   id: string;
   name: string;
+  color: string;
 };
+
+const entityTypeColorPresets = [
+  { name: "Service", color: "#2563EB" },
+  { name: "Database", color: "#16A34A" },
+  { name: "Application", color: "#9333EA" },
+  { name: "Infrastructure", color: "#EA580C" },
+  { name: "Network", color: "#0891B2" },
+  { name: "Security", color: "#DC2626" },
+];
 
 type ImpactEntity = GraphNode & {
   depth: number;
@@ -463,6 +474,12 @@ function App() {
 
   const [graph, setGraph] = useState<GraphResponse | null>(null);
   const [entityTypes, setEntityTypes] = useState<EntityType[]>([]);
+  const [entityTypesError, setEntityTypesError] = useState("");
+  const [entityTypesModalOpen, setEntityTypesModalOpen] = useState(false);
+  const [editingEntityType, setEditingEntityType] = useState<EntityType | null>(null);
+  const [entityTypeForm, setEntityTypeForm] = useState({ name: "", color: "#2563EB" });
+  const [entityTypeSaving, setEntityTypeSaving] = useState(false);
+  const entityTypesRequestId = useRef(0);
 
   const [selectedEntity, setSelectedEntity] =
     useState<GraphNode | null>(null);
@@ -597,23 +614,16 @@ function App() {
     }
 
     const handleConnect = () => {
-      console.log("Socket connected:", socket.id);
       socket.emit("join-organization", organizationId);
-    };
-
-    const handleDisconnect = () => {
-      console.log("Socket disconnected");
     };
 
     socket.auth = { token: localStorage.getItem("token") };
     socket.on("connect", handleConnect);
-    socket.on("disconnect", handleDisconnect);
 
     socket.connect();
 
     return () => {
       socket.off("connect", handleConnect);
-      socket.off("disconnect", handleDisconnect);
       socket.disconnect();
     };
   }, [token, organizationId]);
@@ -692,40 +702,31 @@ function App() {
       return;
     }
 
-    const handleEntityCreated = (entity: GraphNode) => {
-      console.log("ENTITY_CREATED:", entity);
+    const handleEntityTypeChanged = () => {
+      void loadEntityTypes();
+      void loadGraph();
+    };
+    socket.on("ENTITY_TYPE_CREATED", handleEntityTypeChanged);
+    socket.on("ENTITY_TYPE_UPDATED", handleEntityTypeChanged);
+    socket.on("ENTITY_TYPE_DELETED", handleEntityTypeChanged);
+
+    const handleEntityCreated = () => {
       void loadGraph();
     };
 
-    const handleEntityUpdated = (entity: GraphNode) => {
-      console.log("ENTITY_UPDATED:", entity);
+    const handleEntityUpdated = () => {
       void loadGraph();
     };
 
-    const handleEntityDeleted = (entity: {
-      id: string;
-      organizationId: string;
-    }) => {
-      console.log("ENTITY_DELETED:", entity);
+    const handleEntityDeleted = () => {
       void loadGraph();
     };
 
-    const handleRelationshipCreated = (relationship: {
-      id: string;
-      organizationId: string;
-      sourceEntityId: string;
-      targetEntityId: string;
-      relationshipType: string;
-    }) => {
-      console.log("RELATIONSHIP_CREATED:", relationship);
+    const handleRelationshipCreated = () => {
       void loadGraph();
     };
 
-    const handleRelationshipDeleted = (relationship: {
-      id: string;
-      organizationId: string;
-    }) => {
-      console.log("RELATIONSHIP_DELETED:", relationship);
+    const handleRelationshipDeleted = () => {
       void loadGraph();
     };
 
@@ -761,22 +762,28 @@ function App() {
       socket.off("INCIDENT_CREATED", handleIncidentCreated);
       socket.off("INCIDENT_UPDATED", handleIncidentUpdated);
       socket.off("INCIDENT_DELETED", handleIncidentDeleted);
+      socket.off("ENTITY_TYPE_CREATED", handleEntityTypeChanged);
+      socket.off("ENTITY_TYPE_UPDATED", handleEntityTypeChanged);
+      socket.off("ENTITY_TYPE_DELETED", handleEntityTypeChanged);
     };
-  }, [token]);
+  }, [token, organizationId]);
 
   async function loadEntityTypes() {
+    const requestId = ++entityTypesRequestId.current;
     const currentToken = localStorage.getItem("token");
 
     if (!currentToken) {
+      setEntityTypes([]);
+      setEntityTypesLoading(false);
       return;
     }
 
     try {
       setEntityTypesLoading(true);
-      setEntityError("");
+      setEntityTypesError("");
 
       const response = await fetch(
-        `${API_BASE_URL}/entity-types`,
+        `${API_BASE_URL}/entity-types/organization/${organizationId}`,
         { headers: getAuthHeaders() },
       );
 
@@ -791,16 +798,22 @@ function App() {
       }
 
       const data: EntityType[] = await response.json();
-      setEntityTypes(data);
+      if (requestId === entityTypesRequestId.current) {
+        setEntityTypes(data);
+      }
     } catch (err) {
       console.error(err);
-      setEntityError(
-        err instanceof Error
-          ? err.message
-          : "Unable to load entity types.",
-      );
+      if (requestId === entityTypesRequestId.current) {
+        setEntityTypesError(
+          err instanceof Error
+            ? err.message
+            : "Unable to load entity types.",
+        );
+      }
     } finally {
-      setEntityTypesLoading(false);
+      if (requestId === entityTypesRequestId.current) {
+        setEntityTypesLoading(false);
+      }
     }
   }
 
@@ -958,7 +971,7 @@ function App() {
     void loadApprovalRequests();
     const interval = window.setInterval(() => void loadApprovalRequests(), 30_000);
     return () => window.clearInterval(interval);
-  }, [token]);
+  }, [token, organizationId]);
 
   async function loadOrganizationMembers() {
     const currentToken = localStorage.getItem("token");
@@ -1382,6 +1395,11 @@ function App() {
   }, [selectedTeam]);
 
   useEffect(() => {
+    setEntityTypes([]);
+    setEntityTypesError("");
+  }, [organizationId]);
+
+  useEffect(() => {
     if (!token) {
       setLoading(false);
       return;
@@ -1389,7 +1407,7 @@ function App() {
 
     void loadGraph();
     void loadEntityTypes();
-  }, [token]);
+  }, [token, organizationId]);
 
   const affectedIds = useMemo(() => {
     if (!impact) {
@@ -1499,16 +1517,7 @@ function App() {
         },
         data: {
           miniLabel: entity.name,
-          miniColor:
-            type === "DATABASE"
-              ? "#a78bfa"
-              : type === "APPLICATION"
-                ? "#34d399"
-                : type === "INFRASTRUCTURE"
-                  ? "#fbbf24"
-                  : type === "SERVICE"
-                    ? "#38bdf8"
-                    : "#94a3b8",
+          miniColor: entity.entityTypeColor ?? "#64748b",
           label: (
             <div
               className={[
@@ -1518,8 +1527,15 @@ function App() {
                 isAffected ? "is-affected" : "",
                 isFocused ? "is-focused" : "",
               ].join(" ")}
+              style={entity.entityTypeColor ? { borderLeftColor: entity.entityTypeColor } : undefined}
             >
-              <div className="node-icon">{icon}</div>
+              <div
+                className="node-icon"
+                style={entity.entityTypeColor ? {
+                  backgroundColor: entity.entityTypeColor,
+                  borderColor: entity.entityTypeColor,
+                } : undefined}
+              >{icon}</div>
 
               <div className="node-content">
                 <div className="node-type">
@@ -1546,6 +1562,7 @@ function App() {
           background: "transparent",
           boxShadow: "none",
         },
+        className: entity.entityTypeColor ? "has-custom-type-color" : undefined,
       };
     });
   }, [graph, selectedEntity, affectedIds, focusedEntityId]);
@@ -1729,7 +1746,106 @@ function App() {
     setError("");
     setImpactError("");
     setEntityError("");
+    setEntityTypes([]);
+    setEntityTypesError("");
+    setEntityTypesModalOpen(false);
     setActiveView("dashboard");
+  }
+
+  function closeEntityTypesModal() {
+    if (entityTypeSaving) return;
+    setEntityTypesModalOpen(false);
+    setEditingEntityType(null);
+    setEntityTypeForm({ name: "", color: "#2563EB" });
+    setEntityTypesError("");
+  }
+
+  function startCreateEntityType() {
+    setEditingEntityType(null);
+    setEntityTypeForm({ name: "", color: "#2563EB" });
+    setEntityTypesError("");
+  }
+
+  function startEditEntityType(entityType: EntityType) {
+    setEditingEntityType(entityType);
+    setEntityTypeForm({ name: entityType.name, color: entityType.color });
+    setEntityTypesError("");
+  }
+
+  async function saveEntityType() {
+    const name = entityTypeForm.name.trim();
+    if (!name) {
+      setEntityTypesError("Type name is required.");
+      return;
+    }
+    if (!/^#[0-9A-Fa-f]{6}$/.test(entityTypeForm.color)) {
+      setEntityTypesError("Choose a valid six-digit hex color.");
+      return;
+    }
+
+    try {
+      setEntityTypeSaving(true);
+      setEntityTypesError("");
+      const response = await fetch(
+        editingEntityType
+          ? `${API_BASE_URL}/entity-types/${editingEntityType.id}`
+          : `${API_BASE_URL}/entity-types`,
+        {
+          method: editingEntityType ? "PATCH" : "POST",
+          headers: getAuthHeaders(),
+          body: JSON.stringify({
+            ...(editingEntityType ? {} : { organizationId }),
+            name,
+            color: entityTypeForm.color,
+          }),
+        },
+      );
+      if (await handleUnauthorized(response)) {
+        throw new Error("Authentication failed. Please login again.");
+      }
+      const data = await response.json().catch(() => null);
+      if (!response.ok) {
+        throw new Error(data?.error || "Unable to save entity type.");
+      }
+      setEditingEntityType(null);
+      setEntityTypeForm({ name: "", color: "#2563EB" });
+      await loadEntityTypes();
+      await loadGraph();
+    } catch (error) {
+      setEntityTypesError(error instanceof Error ? error.message : "Unable to save entity type.");
+    } finally {
+      setEntityTypeSaving(false);
+    }
+  }
+
+  async function performDeleteEntityType(entityType: EntityType) {
+    try {
+      setEntityTypesError("");
+      const response = await fetch(`${API_BASE_URL}/entity-types/${entityType.id}`, {
+        method: "DELETE",
+        headers: getAuthHeaders(),
+      });
+      if (await handleUnauthorized(response)) {
+        throw new Error("Authentication failed. Please login again.");
+      }
+      const data = response.status === 204 ? null : await response.json().catch(() => null);
+      if (!response.ok) {
+        throw new Error(data?.error || "Unable to delete entity type.");
+      }
+      if (editingEntityType?.id === entityType.id) startCreateEntityType();
+      await loadEntityTypes();
+    } catch (error) {
+      setEntityTypesError(error instanceof Error ? error.message : "Unable to delete entity type.");
+    }
+  }
+
+  function confirmDeleteEntityType(entityType: EntityType) {
+    setConfirmDialog({
+      title: "Delete entity type?",
+      message: `Delete "${entityType.name}"? Types assigned to entities cannot be deleted; no entities will be removed.`,
+      confirmLabel: "Delete type",
+      onConfirm: () => { void performDeleteEntityType(entityType); },
+    });
   }
 
   function openCreateEntity() {
@@ -1794,6 +1910,7 @@ function App() {
       const body = editingEntity
         ? {
             name: entityForm.name.trim(),
+            entityTypeId: entityForm.entityTypeId,
             ...(entityForm.description.trim()
               ? {
                   description: entityForm.description.trim(),
@@ -2691,6 +2808,11 @@ function App() {
 
   const canManageTeams = currentOrganizationRole === "OWNER" ||
     isOrganizationCreator(organizationId);
+  const currentMembershipRole = currentUser?.memberships?.find(
+    (membership) => membership.organizationId === organizationId,
+  )?.role;
+  const canManageEntityTypes = ["OWNER", "ADMIN"].includes(currentOrganizationRole || currentMembershipRole || "") ||
+    isOrganizationCreator(organizationId);
   const canCreateTeams = canManageTeams || currentOrganizationRole === "ADMIN";
   const assignedTeamMemberIds = new Set(teams.flatMap((team) => (team.members ?? []).map((member) => member.userId)));
   const unassignedOrganizationMembers = organizationMembers.filter((member) => !assignedTeamMemberIds.has(member.userId));
@@ -3202,12 +3324,26 @@ function App() {
                 </p>
               </div>
 
-              <button
-                className="primary-button"
-                onClick={openCreateEntity}
-              >
-                + Add Entity
-              </button>
+              <div className="entity-page-actions">
+                {canManageEntityTypes && (
+                  <button
+                    className="secondary-button"
+                    onClick={() => {
+                      setEntityTypesError("");
+                      setEntityTypesModalOpen(true);
+                      void loadEntityTypes();
+                    }}
+                  >
+                    Manage Types
+                  </button>
+                )}
+                <button
+                  className="primary-button"
+                  onClick={openCreateEntity}
+                >
+                  + Add Entity
+                </button>
+              </div>
             </div>
 
             <div className="entity-toolbar">
@@ -3277,6 +3413,7 @@ function App() {
                               className={`entity-type-icon entity-type-${entity.entityType
                                 .toLowerCase()
                                 .replace(/\s+/g, "-")}`}
+                              style={{ backgroundColor: entityTypes.find((type) => type.name === entity.entityType)?.color }}
                             >
                               {entity.entityType
                                 .slice(0, 2)
@@ -3293,6 +3430,11 @@ function App() {
                             className={`type-pill type-${entity.entityType
                               .toLowerCase()
                               .replace(/\s+/g, "-")}`}
+                            style={{
+                              backgroundColor: entityTypes.find((type) => type.name === entity.entityType)?.color,
+                              borderColor: entityTypes.find((type) => type.name === entity.entityType)?.color,
+                              color: "#fff",
+                            }}
                           >
                             {entity.entityType}
                           </span>
@@ -4101,7 +4243,7 @@ function App() {
                 <span>Entity Type</span>
                 <select
                   value={entityForm.entityTypeId}
-                  disabled={Boolean(editingEntity) || entityTypesLoading}
+                  disabled={entityTypesLoading || entitySaving}
                   onChange={(event) =>
                     setEntityForm((current) => ({
                       ...current,
@@ -4115,17 +4257,18 @@ function App() {
                       : "Select a type"}
                   </option>
                   {entityTypes.map((type) => (
-                    <option key={type.id} value={type.id}>
+                      <option key={type.id} value={type.id} style={{ color: type.color }}>
                       {type.name}
                     </option>
                   ))}
                 </select>
-                {editingEntity && (
-                  <small>
-                    Entity type is kept unchanged when editing. Delete and
-                    recreate an entity if its type needs to change.
-                  </small>
-                )}
+                  {entityForm.entityTypeId && entityTypes.find((type) => type.id === entityForm.entityTypeId) && (
+                    <span className="entity-type-selection-preview">
+                      <i style={{ backgroundColor: entityTypes.find((type) => type.id === entityForm.entityTypeId)?.color }} />
+                      {entityTypes.find((type) => type.id === entityForm.entityTypeId)?.name}
+                      <code>{entityTypes.find((type) => type.id === entityForm.entityTypeId)?.color}</code>
+                    </span>
+                  )}
               </label>
 
               <label className="form-field">
@@ -4191,6 +4334,121 @@ function App() {
                     ? "Save Changes"
                     : "Create Entity"}
               </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {entityTypesModalOpen && (
+        <div className="modal-backdrop" onMouseDown={closeEntityTypesModal}>
+          <div
+            className="entity-modal entity-type-modal"
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="entity-types-title"
+            onMouseDown={(event) => event.stopPropagation()}
+          >
+            <div className="modal-header">
+              <div>
+                <span className="page-eyebrow">ORGANIZATION SETTINGS</span>
+                <h2 id="entity-types-title">Manage Entity Types</h2>
+                <p className="entity-type-modal-description">Types are only available to members of this organization.</p>
+              </div>
+              <button
+                type="button"
+                className="modal-close"
+                aria-label="Close entity type management"
+                onClick={closeEntityTypesModal}
+                disabled={entityTypeSaving}
+              >
+                ×
+              </button>
+            </div>
+
+            <div className="entity-type-manager">
+              <section className="entity-type-list-section" aria-label="Organization entity types">
+                <div className="entity-type-list-heading">
+                  <strong>Organization types</strong>
+                  <button type="button" className="table-button" onClick={startCreateEntityType}>+ New type</button>
+                </div>
+                {entityTypesLoading ? (
+                  <div className="entity-type-state"><div className="small-loader" /> Loading organization types...</div>
+                ) : entityTypesError && entityTypes.length === 0 ? (
+                  <div className="entity-type-state entity-type-state-error" role="alert">{entityTypesError}</div>
+                ) : entityTypes.length === 0 ? (
+                  <div className="entity-type-state">
+                    <strong>No types yet</strong>
+                    <span>Create a type to categorize this organization’s entities.</span>
+                  </div>
+                ) : (
+                  <div className="entity-type-list">
+                    {entityTypes.map((type) => (
+                      <div className="entity-type-row" key={type.id}>
+                        <span className="entity-type-swatch" style={{ backgroundColor: type.color }} />
+                        <span className="entity-type-row-name">{type.name}</span>
+                        <code>{type.color}</code>
+                        <button type="button" className="table-button" aria-label={`Edit ${type.name}`} onClick={() => startEditEntityType(type)}>Edit</button>
+                        <button type="button" className="table-button danger" aria-label={`Delete ${type.name}`} onClick={() => confirmDeleteEntityType(type)}>Delete</button>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </section>
+
+              <section className="entity-type-editor" aria-label={editingEntityType ? "Edit entity type" : "Create entity type"}>
+                <h3>{editingEntityType ? "Edit type" : "Create a type"}</h3>
+                <label className="form-field">
+                  <span>Type name</span>
+                  <input
+                    value={entityTypeForm.name}
+                    maxLength={60}
+                    onChange={(event) => setEntityTypeForm((current) => ({ ...current, name: event.target.value }))}
+                    placeholder="e.g. Data Pipeline"
+                    disabled={entityTypeSaving}
+                  />
+                </label>
+                <label className="form-field">
+                  <span>Type color</span>
+                  <div className="entity-type-color-input">
+                    <input
+                      type="color"
+                      aria-label="Choose entity type color"
+                      value={entityTypeForm.color}
+                      onChange={(event) => setEntityTypeForm((current) => ({ ...current, color: event.target.value.toUpperCase() }))}
+                      disabled={entityTypeSaving}
+                    />
+                    <code>{entityTypeForm.color.toUpperCase()}</code>
+                  </div>
+                </label>
+                <div className="entity-type-presets" aria-label="Suggested colors">
+                  {entityTypeColorPresets.map((preset) => (
+                    <button
+                      type="button"
+                      key={preset.name}
+                      className={`entity-type-preset ${entityTypeForm.color.toUpperCase() === preset.color ? "selected" : ""}`}
+                      style={{ backgroundColor: preset.color }}
+                      aria-label={`${preset.name} color ${preset.color}`}
+                      title={`${preset.name} ${preset.color}`}
+                      onClick={() => setEntityTypeForm((current) => ({ ...current, color: preset.color }))}
+                      disabled={entityTypeSaving}
+                    />
+                  ))}
+                </div>
+                <div className="entity-type-preview">
+                  <span className="entity-type-swatch" style={{ backgroundColor: entityTypeForm.color }} />
+                  <strong>{entityTypeForm.name.trim() || "Type preview"}</strong>
+                  <code>{entityTypeForm.color.toUpperCase()}</code>
+                </div>
+                {entityTypesError && <div className="form-error" role="alert">{entityTypesError}</div>}
+                <div className="entity-type-editor-actions">
+                  {editingEntityType && (
+                    <button type="button" className="secondary-button" onClick={startCreateEntityType} disabled={entityTypeSaving}>Cancel edit</button>
+                  )}
+                  <button type="button" className="primary-button" onClick={() => void saveEntityType()} disabled={entityTypeSaving || entityTypesLoading}>
+                    {entityTypeSaving ? "Saving..." : editingEntityType ? "Save changes" : "Create type"}
+                  </button>
+                </div>
+              </section>
             </div>
           </div>
         </div>

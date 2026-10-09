@@ -11,6 +11,7 @@ export async function createEntity(
   const entityType = await prisma.entityType.findUnique({
     where: {
       id: entityTypeId,
+      organizationId,
     },
   });
 
@@ -71,10 +72,12 @@ export async function getEntityById(
 
 export async function updateEntity(
   entityId: string,
+  organizationId: string,
   data: {
     name?: string;
     description?: string | null;
     criticality?: string;
+    entityTypeId?: string;
   },
 ) {
   const existingEntity = await prisma.entity.findUnique({
@@ -85,6 +88,16 @@ export async function updateEntity(
 
   if (!existingEntity) {
     throw new Error("Entity not found");
+  }
+
+  if (data.entityTypeId) {
+    const entityType = await prisma.entityType.findUnique({
+      where: { id: data.entityTypeId, organizationId },
+      select: { id: true },
+    });
+    if (!entityType) {
+      throw new Error("Entity type not found");
+    }
   }
 
   const entity = await prisma.entity.update({

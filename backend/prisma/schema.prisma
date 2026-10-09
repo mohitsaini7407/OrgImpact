@@ -39,6 +39,7 @@ model Organization {
   createdBy    User?       @relation("OrganizationCreator", fields: [createdById], references: [id], onDelete: SetNull)
   memberships   Membership[]
   teams         Team[]
+  entityTypes   EntityType[]
   entities      Entity[]
   relationships Relationship[]
   incidents     Incident[]
@@ -92,11 +93,17 @@ model Membership {
 }
 
 model EntityType {
-  id        String   @id @default(uuid())
-  name      String   @unique
-  createdAt DateTime @default(now())
+  id             String   @id @default(uuid())
+  organizationId String
+  name           String
+  color          String   @default("#2563EB")
+  createdAt      DateTime @default(now())
 
-  entities Entity[]
+  organization Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  entities     Entity[]
+
+  @@unique([organizationId, name])
+  @@unique([id, organizationId])
 }
 
 model Entity {
@@ -110,7 +117,7 @@ model Entity {
   updatedAt      DateTime @updatedAt
 
   organization Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
-  entityType   EntityType   @relation(fields: [entityTypeId], references: [id])
+  entityType   EntityType   @relation(fields: [entityTypeId, organizationId], references: [id, organizationId], onDelete: Restrict)
 
   outgoingRelationships Relationship[] @relation("SourceRelationships")
   incomingRelationships Relationship[] @relation("TargetRelationships")
@@ -119,6 +126,7 @@ model Entity {
 
   @@index([organizationId])
   @@index([entityTypeId])
+  @@index([organizationId, entityTypeId])
   @@index([criticality])
 }
 

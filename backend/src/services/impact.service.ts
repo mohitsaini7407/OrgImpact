@@ -5,6 +5,7 @@ type ImpactNode = {
   name: string;
   description: string | null;
   entityType: string;
+  entityTypeColor: string;
   depth: number;
 };
 
@@ -20,6 +21,12 @@ export async function analyzeImpact(entityId: string) {
 
   if (!rootEntity) {
     return null;
+  }
+
+  if (!rootEntity.entityType) {
+    throw new Error(
+      "Entity type relation is missing or belongs to a different organization",
+    );
   }
 
   const visited = new Set<string>([entityId]);
@@ -54,6 +61,12 @@ export async function analyzeImpact(entityId: string) {
         continue;
       }
 
+      if (!source.entityType) {
+        throw new Error(
+          "Entity type relation is missing or belongs to a different organization",
+        );
+      }
+
       visited.add(source.id);
 
       affectedEntities.push({
@@ -61,6 +74,7 @@ export async function analyzeImpact(entityId: string) {
         name: source.name,
         description: source.description,
         entityType: source.entityType.name,
+        entityTypeColor: source.entityType.color,
         depth,
       });
 
@@ -77,6 +91,7 @@ export async function analyzeImpact(entityId: string) {
       name: rootEntity.name,
       description: rootEntity.description,
       entityType: rootEntity.entityType.name,
+      entityTypeColor: rootEntity.entityType.color,
     },
     totalAffected: affectedEntities.length,
     affectedEntities,

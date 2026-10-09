@@ -16,6 +16,12 @@ export async function getOrganizationGraph(organizationId: string) {
     }),
   ]);
 
+  if (entities.some((entity) => !entity.entityType)) {
+    throw new Error(
+      "Entity type relation is missing or belongs to a different organization",
+    );
+  }
+
   return {
     organizationId,
 
@@ -24,6 +30,7 @@ export async function getOrganizationGraph(organizationId: string) {
       name: entity.name,
       description: entity.description,
       entityType: entity.entityType.name,
+      entityTypeColor: entity.entityType.color,
 
       // Add this
       criticality: entity.criticality,

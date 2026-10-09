@@ -1,6 +1,15 @@
 import { prisma } from "../lib/prisma.js";
 import crypto from "node:crypto";
 
+const defaultEntityTypes = [
+  { name: "Service", color: "#2563EB" },
+  { name: "Database", color: "#16A34A" },
+  { name: "Application", color: "#9333EA" },
+  { name: "Infrastructure", color: "#EA580C" },
+  { name: "Network", color: "#0891B2" },
+  { name: "Security", color: "#DC2626" },
+];
+
 export async function createOrganization(
   name: string,
   slug: string,
@@ -23,6 +32,13 @@ export async function createOrganization(
         organizationId: organization.id,
         role: "OWNER",
       },
+    });
+
+    await tx.entityType.createMany({
+      data: defaultEntityTypes.map((entityType) => ({
+        ...entityType,
+        organizationId: organization.id,
+      })),
     });
 
     return organization;

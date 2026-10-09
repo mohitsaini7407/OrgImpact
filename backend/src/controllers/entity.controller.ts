@@ -91,6 +91,7 @@ export async function updateEntityController(
 
   const entity = await updateEntity(
     entityId,
+    req.organizationId!,
     req.body,
   );
 

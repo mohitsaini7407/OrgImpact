@@ -22,5 +22,6 @@ export const updateEntitySchema = z
     name: z.string().trim().min(2).optional(),
     description: z.string().trim().nullable().optional(),
     criticality: criticalitySchema.optional(),
+    entityTypeId: z.string().uuid().optional(),
   })
   .strict();

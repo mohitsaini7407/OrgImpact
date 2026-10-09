@@ -17,6 +17,13 @@ export function errorHandler(
     error instanceof Prisma.PrismaClientKnownRequestError
   ) {
     if (error.code === "P2002") {
+      const target = error.meta?.target;
+      if (Array.isArray(target) && target.includes("organizationId") && target.includes("name")) {
+        res.status(409).json({
+          error: "An entity type with this name already exists in this organization",
+        });
+        return;
+      }
       res.status(409).json({
         error: "Resource already exists",
       });
@@ -41,6 +48,9 @@ export function errorHandler(
   if (error instanceof Error) {
     const knownErrors: Record<string, number> = {
       "Entity not found": 404,
+      "Entity type not found": 404,
+      "An entity type with this name already exists in this organization": 409,
+      "Entity type is assigned to entities and cannot be deleted": 409,
       "Source entity not found": 404,
       "Target entity not found": 404,
       "Relationship not found": 404,
