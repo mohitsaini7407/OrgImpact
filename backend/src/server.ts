@@ -32,7 +32,7 @@ async function startServer() {
 
     initializeSocket(httpServer);
 
-    httpServer.listen(PORT, () => {
+    httpServer.listen(PORT, "0.0.0.0", () => {
       console.log(`OrgImpact API running on port ${PORT}`);
       console.log(`Socket.IO running on port ${PORT}`);
     });
