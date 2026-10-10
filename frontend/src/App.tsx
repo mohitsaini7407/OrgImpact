@@ -24,6 +24,7 @@ import OrgImpactLogo from "./OrgImpactLogo";
 import { deriveGraphRelationshipDisplay, filterValidGraphRelationships, layoutGraphNodes } from "./graphRelationships";
 import DependencyEdge from "./DependencyEdge";
 import GraphEntityNode from "./GraphEntityNode";
+import EntityTypeIcon from "./EntityTypeIcon";
 
 
 type NavIconName = "dashboard" | "entities" | "relationships" | "teams" | "members" | "incidents" | "simulation" | "chat";
@@ -145,6 +146,7 @@ function IncidentStatusDropdown({
     "INVESTIGATING",
     "RESOLVED",
   ];
+  const safeValue = options.includes(value) ? value : "OPEN";
 
   return (
     <div className="incident-status-dropdown" ref={ref}>
@@ -155,8 +157,8 @@ function IncidentStatusDropdown({
         aria-haspopup="listbox"
         aria-expanded={open}
       >
-        <span className={`incident-status-indicator ${value.toLowerCase()}`} />
-        <span>{value.charAt(0) + value.slice(1).toLowerCase()}</span>
+        <span className={`incident-status-indicator ${safeValue.toLowerCase()}`} />
+        <span>{safeValue.charAt(0) + safeValue.slice(1).toLowerCase()}</span>
         <svg
           width="16"
           height="16"
@@ -1565,20 +1567,15 @@ function App() {
 
       const type = entityType.toUpperCase();
       let typeClass = "graph-node-default";
-      let icon = "•";
 
       if (type === "SERVICE") {
         typeClass = "graph-node-service";
-        icon = "S";
       } else if (type === "DATABASE") {
         typeClass = "graph-node-database";
-        icon = "DB";
       } else if (type === "APPLICATION") {
         typeClass = "graph-node-application";
-        icon = "A";
       } else if (type === "INFRASTRUCTURE") {
         typeClass = "graph-node-infrastructure";
-        icon = "INF";
       }
 
       return {
@@ -1610,7 +1607,7 @@ function App() {
                   backgroundColor: entity.entityTypeColor,
                   borderColor: entity.entityTypeColor,
                 } : undefined}
-              >{icon}</div>
+              ><EntityTypeIcon type={type} /></div>
 
               <div className="node-content">
                 <div className="node-type">
@@ -3550,6 +3547,7 @@ function App() {
                   <>
                     <div className="entity-summary">
                       <span className="entity-type">
+                        <EntityTypeIcon type={selectedEntity.entityType} size={14} />
                         {selectedEntity.entityType}
                       </span>
                       <h2>{selectedEntity.name}</h2>
@@ -3635,7 +3633,7 @@ function App() {
                               </div>
                               <div className="affected-main">
                                 <strong>{entity.name}</strong>
-                                <span>{entity.entityType}</span>
+                                <span className="affected-entity-type"><EntityTypeIcon type={entity.entityType} size={13} />{entity.entityType}</span>
                               </div>
                             </button>
                           ))}
@@ -3762,16 +3760,6 @@ function App() {
                         <td className="entity-row-index">{String(index + 1).padStart(2, "0")}</td>
                         <td>
                           <div className="entity-name-cell">
-                            <div
-                              className={`entity-type-icon entity-type-${entity.entityType
-                                .toLowerCase()
-                                .replace(/\s+/g, "-")}`}
-                              style={{ backgroundColor: entityTypes.find((type) => type.name === entity.entityType)?.color }}
-                            >
-                              {entity.entityType
-                                .slice(0, 2)
-                                .toUpperCase()}
-                            </div>
                             <div>
                               <strong>{entity.name}</strong>
                               <small>{entity.id}</small>
@@ -3789,6 +3777,7 @@ function App() {
                               color: "#fff",
                             }}
                           >
+                            <EntityTypeIcon type={entity.entityType} size={14} />
                             {entity.entityType}
                           </span>
                         </td>
@@ -3946,8 +3935,8 @@ function App() {
                   return (
                     <div className="relationship-row" key={relationship.id}>
                       <div className="relationship-entity source">
-                        <span className={`relationship-type-icon ${source?.entityType.toLowerCase() ?? ""}`}>
-                          {source?.entityType.slice(0, 2).toUpperCase() ?? "?"}
+                        <span className={`relationship-type-icon ${String(source?.entityType ?? "").toLowerCase()}`}>
+                          <EntityTypeIcon type={source?.entityType ?? "UNKNOWN"} size={20} />
                         </span>
                         <div>
                           <strong>{source?.name ?? "Unknown entity"}</strong>
@@ -3961,8 +3950,8 @@ function App() {
                       </div>
 
                       <div className="relationship-entity target">
-                        <span className={`relationship-type-icon ${target?.entityType.toLowerCase() ?? ""}`}>
-                          {target?.entityType.slice(0, 2).toUpperCase() ?? "?"}
+                        <span className={`relationship-type-icon ${String(target?.entityType ?? "").toLowerCase()}`}>
+                          <EntityTypeIcon type={target?.entityType ?? "UNKNOWN"} size={20} />
                         </span>
                         <div>
                           <strong>{target?.name ?? "Unknown entity"}</strong>
@@ -3992,17 +3981,17 @@ function App() {
             <div className="incident-layout">
               <section className="incidents-list-panel">
                 <div className="section-heading-row"><div><span className="page-eyebrow">INCIDENTS</span><h3>{incidents.length} Incidents</h3></div>{incidentsLoading && <span className="loading-text">Loading...</span>}</div>
-                {incidentsLoading ? <div className="team-loading"><div className="small-loader" /> Loading incidents...</div> : incidents.length === 0 ? <div className="empty-management"><div className="empty-management-icon">!</div><h3>No incidents yet</h3><p>Create an incident to see its blast radius.</p><button className="primary-button" onClick={openCreateIncident} disabled={!graph?.nodes.length}>Create Incident</button></div> : <div className="incident-card-list">{incidents.map((incident) => <button key={incident.id} className={`incident-card ${selectedIncident?.id === incident.id ? "active" : ""}`} onClick={() => selectIncident(incident)}><div className="incident-card-top"><span className={`incident-severity ${incident.severity.toLowerCase()}`}>{incident.severity}</span><span className={`incident-status ${incident.status.toLowerCase()}`}>{incident.status}</span></div><strong>{incident.title}</strong><span className="incident-affected">Affects: {incident.affectedEntity?.name ?? "Unknown entity"}</span><small>{new Date(incident.createdAt).toLocaleString()}</small></button>)}</div>}
+                {incidentsLoading ? <div className="team-loading"><div className="small-loader" /> Loading incidents...</div> : incidents.length === 0 ? <div className="empty-management"><div className="empty-management-icon">!</div><h3>No incidents yet</h3><p>Create an incident to see its blast radius.</p><button className="primary-button" onClick={openCreateIncident} disabled={!graph?.nodes.length}>Create Incident</button></div> : <div className="incident-card-list">{incidents.map((incident) => { const severity = incident.severity ?? "MEDIUM"; const status = incident.status ?? "OPEN"; return <button key={incident.id} className={`incident-card ${selectedIncident?.id === incident.id ? "active" : ""}`} onClick={() => selectIncident(incident)}><div className="incident-card-top"><span className={`incident-severity ${String(severity).toLowerCase()}`}>{severity}</span><span className={`incident-status ${String(status).toLowerCase()}`}>{status}</span></div><strong>{incident.title}</strong><span className="incident-affected">Affects: {incident.affectedEntity?.name ?? "Unknown entity"}</span><small>{new Date(incident.createdAt).toLocaleString()}</small></button>; })}</div>}
               </section>
               <section className="incident-detail-panel">
                 {!selectedIncident ? <div className="empty-management detail-empty"><div className="empty-management-icon">!</div><h3>Select an incident</h3><p>Choose an incident to calculate its dependency blast radius.</p></div> : <>
                   <div className="incident-detail-header"><div><span className="page-eyebrow">INCIDENT</span><h2>{selectedIncident.title}</h2><p>{selectedIncident.description || "No incident description provided."}</p></div><div className="incident-detail-actions"><button className="secondary-button" onClick={() => openEditIncident(selectedIncident)}>Edit</button><button className="table-button danger" onClick={() => void deleteIncident(selectedIncident)}>Delete</button></div></div>
-                  <div className="incident-meta-grid"><div className="incident-meta-card"><span>Severity</span><strong className={`incident-severity ${selectedIncident.severity.toLowerCase()}`}>{selectedIncident.severity}</strong></div><div className="incident-meta-card"><span>Status</span>{canChangeIncidentStatus(selectedIncident) ? <IncidentStatusDropdown
-                        value={selectedIncident.status}
+                  <div className="incident-meta-grid"><div className="incident-meta-card"><span>Severity</span><strong className={`incident-severity ${String(selectedIncident.severity ?? "MEDIUM").toLowerCase()}`}>{selectedIncident.severity ?? "MEDIUM"}</strong></div><div className="incident-meta-card"><span>Status</span>{canChangeIncidentStatus(selectedIncident) ? <IncidentStatusDropdown
+                        value={selectedIncident.status ?? "OPEN"}
                         onChange={(status) =>
                           void updateIncidentStatus(selectedIncident, status)
                         }
-                      /> : <span className={`incident-status ${selectedIncident.status.toLowerCase()}`} title="Only the status updater, incident creator, organization owner, or an admin can change this status">{selectedIncident.status.charAt(0) + selectedIncident.status.slice(1).toLowerCase()}</span>}</div><div className="incident-meta-card"><span>Affected Entity</span><strong>{selectedIncident.affectedEntity?.name ?? "Unknown entity"}</strong></div><div className="incident-meta-card"><span>Created</span><strong>{new Date(selectedIncident.createdAt).toLocaleDateString()}</strong></div></div>
+                      /> : <span className={`incident-status ${String(selectedIncident.status ?? "OPEN").toLowerCase()}`} title="Only the status updater, incident creator, organization owner, or an admin can change this status">{String(selectedIncident.status ?? "OPEN").charAt(0) + String(selectedIncident.status ?? "OPEN").slice(1).toLowerCase()}</span>}</div><div className="incident-meta-card"><span>Affected Entity</span><strong>{selectedIncident.affectedEntity?.name ?? "Unknown entity"}</strong></div><div className="incident-meta-card"><span>Created</span><strong>{new Date(selectedIncident.createdAt).toLocaleDateString()}</strong></div></div>
                   <section className="incident-people-panel">
                     <div className="section-heading-row"><div><span className="page-eyebrow">OWNERSHIP</span><h3>Incident participants</h3></div></div>
                     <div className="incident-people-list">
@@ -4014,7 +4003,7 @@ function App() {
                       {selectedIncident.status === "RESOLVED" && !selectedIncident.resolvedBy && <p className="incident-people-empty">No resolver was recorded for this incident.</p>}
                     </div>
                   </section>
-                  <div className="incident-blast-radius"><div className="section-heading-row"><div><span className="page-eyebrow">BLAST RADIUS</span><h3>Potentially Affected Systems</h3></div>{impact && <strong>{impact.totalAffected} affected</strong>}</div>{impactLoading ? <div className="team-loading"><div className="small-loader" /> Calculating dependency blast radius...</div> : impactError ? <div className="page-error">{impactError}</div> : impact ? <><div className="impact-overview"><div className="impact-metric"><strong>{impact.totalAffected}</strong><span>Affected</span></div><div className="impact-metric"><strong>{impact.affectedEntities.filter((e) => e.depth === 1).length}</strong><span>Direct</span></div><div className="impact-metric"><strong>{impact.affectedEntities.length ? Math.max(...impact.affectedEntities.map((e) => e.depth)) : 0}</strong><span>Max Depth</span></div></div><div className="affected-section">{impact.totalAffected === 0 ? <div className="no-impact"><strong>No downstream impact detected</strong><p>No dependent entities were found.</p></div> : impact.affectedEntities.map((entity) => <button className="affected-item" key={entity.id} onClick={() => handleIncidentAffectedEntityClick(entity.id)}><div className="affected-main"><strong>{entity.name}</strong><span>{entity.entityType}</span></div><div className="depth-badge">Depth {entity.depth}</div></button>)}</div></> : <div className="empty-management"><p>Select the incident to calculate impact.</p></div>}</div>
+                  <div className="incident-blast-radius"><div className="section-heading-row"><div><span className="page-eyebrow">BLAST RADIUS</span><h3>Potentially Affected Systems</h3></div>{impact && <strong>{impact.totalAffected} affected</strong>}</div>{impactLoading ? <div className="team-loading"><div className="small-loader" /> Calculating dependency blast radius...</div> : impactError ? <div className="page-error">{impactError}</div> : impact ? <><div className="impact-overview"><div className="impact-metric"><strong>{impact.totalAffected}</strong><span>Affected</span></div><div className="impact-metric"><strong>{impact.affectedEntities.filter((e) => e.depth === 1).length}</strong><span>Direct</span></div><div className="impact-metric"><strong>{impact.affectedEntities.length ? Math.max(...impact.affectedEntities.map((e) => e.depth)) : 0}</strong><span>Max Depth</span></div></div><div className="affected-section">{impact.totalAffected === 0 ? <div className="no-impact"><strong>No downstream impact detected</strong><p>No dependent entities were found.</p></div> : impact.affectedEntities.map((entity) => <button className="affected-item" key={entity.id} onClick={() => handleIncidentAffectedEntityClick(entity.id)}><div className="affected-main"><strong>{entity.name}</strong><span className="affected-entity-type"><EntityTypeIcon type={entity.entityType} size={13} />{entity.entityType}</span></div><div className="depth-badge">Depth {entity.depth}</div></button>)}</div></> : <div className="empty-management"><p>Select the incident to calculate impact.</p></div>}</div>
                 </>}
               </section>
             </div>
@@ -4122,7 +4111,7 @@ function App() {
                         >
                           <div className="simulation-entity-card-top">
                             <span className="simulation-entity-icon">
-                              {entity.entityType.slice(0, 2)}
+                              <EntityTypeIcon type={entity.entityType} size={18} />
                             </span>
 
                             {risk ? (
@@ -4258,7 +4247,7 @@ function App() {
                             >
                               <div className="affected-main">
                                 <strong>{entity.name}</strong>
-                                <span>{entity.entityType}</span>
+                                <span className="affected-entity-type"><EntityTypeIcon type={entity.entityType} size={13} />{entity.entityType}</span>
                               </div>
                               <div className="depth-badge">
                                 Depth {entity.depth}
@@ -4278,8 +4267,10 @@ function App() {
           <section className="chat-page">
             <div className="page-header chat-page-header">
               <div>
-                <span className="page-eyebrow">ORGIMPACT MESSAGING</span>
-                <div className="page-heading-title"><span className="page-section-logo"><NavIcon name="chat" /></span><h2>Chat</h2></div>
+                <div className="page-heading-line">
+                  <div className="page-heading-title"><span className="page-section-logo"><NavIcon name="chat" /></span><h2>Chat</h2></div>
+                  <span className="page-eyebrow">ORGIMPACT MESSAGING</span>
+                </div>
                 <p className="page-header-description">Talk with organization members and teams in real time.</p>
               </div>
               <span className={`chat-connection-status ${chatConnected ? "connected" : "disconnected"}`}><i />{chatConnected ? "Connected" : "Disconnected"}</span>
@@ -4698,7 +4689,9 @@ function App() {
                 </select>
                   {entityForm.entityTypeId && entityTypes.find((type) => type.id === entityForm.entityTypeId) && (
                     <span className="entity-type-selection-preview">
-                      <i style={{ backgroundColor: entityTypes.find((type) => type.id === entityForm.entityTypeId)?.color }} />
+                      <span className="entity-type-preview-icon" style={{ backgroundColor: entityTypes.find((type) => type.id === entityForm.entityTypeId)?.color }}>
+                        <EntityTypeIcon type={entityTypes.find((type) => type.id === entityForm.entityTypeId)?.name ?? ""} size={16} />
+                      </span>
                       {entityTypes.find((type) => type.id === entityForm.entityTypeId)?.name}
                       <code>{entityTypes.find((type) => type.id === entityForm.entityTypeId)?.color}</code>
                     </span>
@@ -4818,7 +4811,7 @@ function App() {
                   <div className="entity-type-list">
                     {entityTypes.map((type) => (
                       <div className="entity-type-row" key={type.id}>
-                        <span className="entity-type-swatch" style={{ backgroundColor: type.color }} />
+                        <span className="entity-type-row-icon" style={{ backgroundColor: type.color }}><EntityTypeIcon type={type.name} size={16} /></span>
                         <span className="entity-type-row-name">{type.name}</span>
                         <code>{type.color}</code>
                         <button type="button" className="table-button" aria-label={`Edit ${type.name}`} onClick={() => startEditEntityType(type)}>Edit</button>
@@ -4869,7 +4862,9 @@ function App() {
                   ))}
                 </div>
                 <div className="entity-type-preview">
-                  <span className="entity-type-swatch" style={{ backgroundColor: entityTypeForm.color }} />
+                  <span className="entity-type-preview-icon" style={{ backgroundColor: entityTypeForm.color }}>
+                    <EntityTypeIcon type={entityTypeForm.name} size={16} />
+                  </span>
                   <strong>{entityTypeForm.name.trim() || "Type preview"}</strong>
                   <code>{entityTypeForm.color.toUpperCase()}</code>
                 </div>

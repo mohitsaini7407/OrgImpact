@@ -701,6 +701,8 @@ html[data-theme="light"] .graph-relationship-label {
 
 .entity-type {
   display:inline-flex;
+  align-items:center;
+  gap:6px;
   padding:5px 8px;
   border:1px solid #334155;
   border-radius:6px;
@@ -851,7 +853,9 @@ html[data-theme="light"] .graph-relationship-label {
 }
 
 .affected-main span {
-  display:block;
+  display:flex;
+  align-items:center;
+  gap:5px;
   margin-top:3px;
   color:#64748b;
   font-size:9px;
@@ -1120,6 +1124,16 @@ html[data-theme="light"] .graph-relationship-label {
   font-weight:900;
 }
 
+.entity-type-icon svg,
+.relationship-type-icon svg,
+.node-icon svg,
+.simulation-entity-icon svg,
+.entity-type-row-icon svg,
+.entity-type-preview-icon svg {
+  display:block;
+  flex:none;
+}
+
 .entity-type-service {
   background:#2563eb;
 }
@@ -1138,6 +1152,8 @@ html[data-theme="light"] .graph-relationship-label {
 
 .type-pill {
   display:inline-flex;
+  align-items:center;
+  gap:5px;
   padding:5px 8px;
   border-radius:6px;
   font-size:9px;
@@ -2690,9 +2706,6 @@ html[data-theme="light"] .graph-relationship-label {
   background: rgba(37, 99, 235, 0.16);
   border: 1px solid rgba(59, 130, 246, 0.28);
   color: #60a5fa;
-  font-size: 9px;
-  font-weight: 800;
-  text-transform: uppercase;
 }
 
 .simulation-entity-card strong {
@@ -4666,6 +4679,7 @@ html[data-theme="dark"] {
   --oi-text:#f4f6fa;
   --oi-text-secondary:#a5afbf;
   --oi-text-muted:#7f8a9c;
+  --oi-description-color:#cbd5e1;
   --oi-border:#2b3341;
   --oi-accent:#38a8e8;
   --oi-accent-strong:#2582ce;
@@ -4686,6 +4700,7 @@ html[data-theme="light"] {
   --oi-text:#172033;
   --oi-text-secondary:#64748b;
   --oi-text-muted:#8491a5;
+  --oi-description-color:#475569;
   --oi-border:#dce4ef;
   --oi-accent:#4263eb;
   --oi-accent-strong:#3451d1;
@@ -6047,7 +6062,7 @@ html[data-theme="light"] .modal-body {
 
 .entity-type-row {
   display:grid;
-  grid-template-columns:14px minmax(60px,1fr) auto auto auto;
+  grid-template-columns:28px minmax(60px,1fr) auto auto auto;
   align-items:center;
   gap:9px;
   min-height:42px;
@@ -6063,6 +6078,26 @@ html[data-theme="light"] .modal-body {
   flex:none;
   border-radius:50%;
   box-shadow:0 0 0 2px rgba(255,255,255,.08);
+}
+
+.entity-type-row-icon,
+.entity-type-preview-icon {
+  display:inline-flex;
+  align-items:center;
+  justify-content:center;
+  flex:none;
+  border-radius:7px;
+  color:#fff;
+}
+
+.entity-type-row-icon {
+  width:26px;
+  height:26px;
+}
+
+.entity-type-preview-icon {
+  width:24px;
+  height:24px;
 }
 
 .entity-type-row-name {
@@ -6166,13 +6201,6 @@ html[data-theme="light"] .modal-body {
   width:max-content;
   max-width:100%;
   padding:6px 9px;
-}
-
-.entity-type-selection-preview i {
-  width:10px;
-  height:10px;
-  flex:none;
-  border-radius:50%;
 }
 
 .entity-type-editor-actions {
@@ -7327,13 +7355,20 @@ html,body,#root {
   display:flex;
   flex-direction:column;
   align-items:flex-start;
+  gap:1px;
+}
+
+.organization-stat-copy>span {
+  line-height:1.2;
 }
 
 .organization-stat-copy strong {
+  margin-top:0;
   max-width:100%;
   overflow:hidden;
   text-overflow:ellipsis;
   white-space:nowrap;
+  line-height:1.2;
 }
 
 @media (max-width:900px) {
@@ -8392,7 +8427,7 @@ html[data-theme="light"] .password-visibility-toggle:focus-visible {
 
 .chat-shortcut .nav-chat-unread {
   position:absolute;
-  top:-5px;
+  top: -5px;
   right:-5px;
 }
 
@@ -8477,11 +8512,12 @@ html[data-theme="light"] .password-visibility-toggle:focus-visible {
   margin:0;
   white-space:nowrap;
   overflow-wrap:normal;
+  transform:translateY(7px);
 }
 
 .section-heading-row>div:has(>.page-eyebrow),.team-members-section-heading>div,.unassigned-heading>div {
   display:flex;
-  align-items:baseline;
+  align-items:center;
   gap:8px;
   min-width:0;
 }
@@ -8490,6 +8526,7 @@ html[data-theme="light"] .password-visibility-toggle:focus-visible {
   order:2;
   margin:0;
   flex:0 0 auto;
+  transform:translateY(2px);
 }
 
 .section-heading-row>div:has(>.page-eyebrow) h3,.team-members-section-heading h3,.unassigned-heading h4 {
@@ -8502,7 +8539,7 @@ html[data-theme="light"] .password-visibility-toggle:focus-visible {
 .incident-detail-header>div:first-child {
   display:flex;
   flex-wrap:wrap;
-  align-items:baseline;
+  align-items:center;
   column-gap:8px;
   row-gap:7px;
 }
@@ -8510,6 +8547,7 @@ html[data-theme="light"] .password-visibility-toggle:focus-visible {
 .incident-detail-header>div:first-child>.page-eyebrow {
   order:2;
   margin:0;
+  transform:translateY(5px);
 }
 
 .incident-detail-header>div:first-child>h2 {
@@ -8520,7 +8558,9 @@ html[data-theme="light"] .password-visibility-toggle:focus-visible {
 .incident-detail-header>div:first-child>p {
   order:3;
   flex:0 0 100%;
+  width:100%;
   margin:0;
+  text-align:left;
 }
 
 /* Shared confirmation card for destructive actions. */
@@ -9070,6 +9110,7 @@ html[data-theme="light"] .graph-mini-viewport {
 .dashboard-graph-title-row .page-eyebrow {
   margin:0;
   color:var(--oi-accent-strong,#38bdf8);
+  transform:translateY(7px);
 }
 
 .dashboard-graph-title-row h2 {
@@ -9780,6 +9821,10 @@ html[data-theme="light"] .dashboard-experience .graph-node .node-description {
   text-align: right;
 }
 
+.dashboard-experience .affected-main .affected-entity-type {
+  justify-content: flex-end;
+}
+
 html[data-theme="light"] .relationship-type-manager {
   border-color: var(--oi-border);
   background: var(--oi-surface-muted);
@@ -9999,4 +10044,35 @@ html[data-theme="light"] .incident-people-empty {
 
 html[data-theme="light"] .incident-person-row strong {
   color: var(--oi-text);
+}
+
+html[data-theme="dark"] .app :is(
+  .page-header-description,
+  .page-header p,
+  .graph-header p,
+  .node-description,
+  .entity-description-cell,
+  .incident-detail-header p,
+  .login-subtitle,
+  .team-filter-note,
+  .entity-type-modal-description,
+  .relationship-hint
+) {
+  color: var(--oi-description-color);
+}
+
+html[data-theme="light"] .app :is(
+  .page-header-description,
+  .page-header p,
+  .graph-header p,
+  .node-description,
+  .entity-description-cell,
+  .incident-detail-header p,
+  .login-subtitle,
+  .team-filter-note,
+  .entity-type-modal-description,
+  .relationship-hint
+),
+html[data-theme="light"] .app .dashboard-experience .graph-node .node-description {
+  color: var(--oi-description-color);
 }
