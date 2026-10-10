@@ -111,6 +111,7 @@ export async function updateIncidentController(
   const incident = await updateIncident(
     incidentId,
     req.organizationId,
+    req.userId!,
     req.body,
   );
 

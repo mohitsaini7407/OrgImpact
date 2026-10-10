@@ -1,5 +1,12 @@
 import { prisma } from "../lib/prisma.js";
 import { publishRealtimeEvent } from "../lib/realtime.js";
+import { normalizeRelationshipType } from "../routes/relationship.schema.js";
+
+const duplicateRelationshipMessage = "This relationship already exists between these entities.";
+
+function isUniqueConstraintError(error: unknown): error is { code: "P2002" } {
+  return typeof error === "object" && error !== null && "code" in error && error.code === "P2002";
+}
 
 export async function createRelationship(
   organizationId: string,
@@ -40,19 +47,52 @@ export async function createRelationship(
     );
   }
 
-  const relationship = await prisma.relationship.create({
-    data: {
-      organizationId,
-      sourceEntityId,
-      targetEntityId,
-      relationshipType,
-      createdById: createdById ?? null,
-    },
-    include: {
-      sourceEntity: true,
-      targetEntity: true,
-    },
-  });
+  const normalizedType = normalizeRelationshipType(relationshipType);
+  const uniquenessKey = JSON.stringify([
+    organizationId,
+    sourceEntityId,
+    targetEntityId,
+    normalizedType.toLowerCase(),
+  ]);
+  let relationship;
+  try {
+    relationship = await prisma.$transaction(async (transaction) => {
+      // Serialize duplicate checks for this directed tuple, including when a
+      // pre-existing duplicate prevents installing the expression index.
+      const typeLockKey = "relationship-type:" + organizationId + ":" + normalizedType;
+      await transaction.$queryRawUnsafe("SELECT pg_advisory_xact_lock(hashtext($1))::text AS locked", typeLockKey);
+      const relationshipTypeRecord = await transaction.relationshipType.findFirst({
+        where: { organizationId, name: normalizedType },
+        select: { id: true },
+      });
+      if (!relationshipTypeRecord) throw new Error("Relationship type not found");
+
+      await transaction.$queryRawUnsafe("SELECT pg_advisory_xact_lock(hashtext($1))::text AS locked", uniquenessKey);
+      const existing = await transaction.relationship.findFirst({
+        where: { organizationId, sourceEntityId, targetEntityId },
+        select: { relationshipType: true },
+      });
+      if (existing && normalizeRelationshipType(existing.relationshipType) === normalizedType) {
+        throw new Error(duplicateRelationshipMessage);
+      }
+      return transaction.relationship.create({
+        data: {
+          organizationId,
+          sourceEntityId,
+          targetEntityId,
+          relationshipType: normalizedType,
+          createdById: createdById ?? null,
+        },
+        include: {
+          sourceEntity: true,
+          targetEntity: true,
+        },
+      });
+    });
+  } catch (error) {
+    if (isUniqueConstraintError(error)) throw new Error(duplicateRelationshipMessage);
+    throw error;
+  }
 
   await publishRealtimeEvent(
     "RELATIONSHIP_CREATED",

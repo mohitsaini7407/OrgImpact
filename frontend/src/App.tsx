@@ -5,20 +5,25 @@ import { socket } from "./socket";
 import {
   Background,
   Controls,
+  MiniMap,
   MarkerType,
+  Position,
   ReactFlow,
-  useStore,
-  useViewport,
   type Edge,
   type Node,
+  type NodeChange,
   type NodeMouseHandler,
   type ReactFlowInstance,
 } from "@xyflow/react";
 import "@xyflow/react/dist/style.css";
 import "./App.css";
+import "./graph-bridges.css";
 import Login from "./Login";
 import OrganizationOnboarding from "./OrganizationOnboarding";
 import OrgImpactLogo from "./OrgImpactLogo";
+import { deriveGraphRelationshipDisplay, filterValidGraphRelationships, layoutGraphNodes } from "./graphRelationships";
+import DependencyEdge from "./DependencyEdge";
+import GraphEntityNode from "./GraphEntityNode";
 
 
 type NavIconName = "dashboard" | "entities" | "relationships" | "teams" | "members" | "incidents" | "simulation" | "chat";
@@ -36,6 +41,8 @@ function NavIcon({ name }: { name: NavIconName }) {
 }
 
 const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || "http://localhost:5000";
+const graphEdgeTypes = { dependency: DependencyEdge };
+const graphNodeTypes = { graphEntity: GraphEntityNode };
 
 type GraphNode = {
   id: string;
@@ -53,109 +60,11 @@ type GraphEdge = {
   relationshipType: string;
 };
 
-function GraphMiniOverview({
-  nodes,
-  edges,
-}: {
-  nodes: Node[];
-  edges: Edge[];
-}) {
-  const viewport = useViewport();
-  const flowWidth = useStore((state) => state.width);
-  const flowHeight = useStore((state) => state.height);
-  const nodeWidth = 230;
-  const nodeHeight = 100;
-  const width = 220;
-  const height = 140;
-  const padding = 12;
-
-  if (nodes.length === 0) {
-    return null;
-  }
-
-  const minX = Math.min(...nodes.map((node) => node.position.x));
-  const minY = Math.min(...nodes.map((node) => node.position.y));
-  const maxX = Math.max(...nodes.map((node) => node.position.x + nodeWidth));
-  const maxY = Math.max(...nodes.map((node) => node.position.y + nodeHeight));
-  const graphWidth = Math.max(maxX - minX, 1);
-  const graphHeight = Math.max(maxY - minY, 1);
-  const scale = Math.min(
-    (width - padding * 2) / graphWidth,
-    (height - padding * 2) / graphHeight,
-  );
-  const offsetX = (width - graphWidth * scale) / 2;
-  const offsetY = (height - graphHeight * scale) / 2;
-  const positionOf = (node: Node, right = false) => ({
-    x: offsetX + (node.position.x + (right ? nodeWidth : 0) - minX) * scale,
-    y: offsetY + (node.position.y + nodeHeight / 2 - minY) * scale,
-  });
-  const nodeById = new Map(nodes.map((node) => [node.id, node]));
-  const viewportX = offsetX + (-viewport.x / viewport.zoom - minX) * scale;
-  const viewportY = offsetY + (-viewport.y / viewport.zoom - minY) * scale;
-  const viewportWidth = (flowWidth / viewport.zoom) * scale;
-  const viewportHeight = (flowHeight / viewport.zoom) * scale;
-
-  return (
-    <div className="graph-mini-overview" aria-label="Dependency graph overview">
-      <svg viewBox={`0 0 ${width} ${height}`} role="img" aria-hidden="true">
-        {edges.map((edge) => {
-          const source = nodeById.get(edge.source);
-          const target = nodeById.get(edge.target);
-          if (!source || !target) return null;
-          const start = positionOf(source, true);
-          const end = positionOf(target);
-          const middleX = (start.x + end.x) / 2;
-          return (
-            <path
-              key={edge.id}
-              className="graph-mini-edge"
-              d={`M ${start.x} ${start.y} H ${middleX} V ${end.y} H ${end.x}`}
-            />
-          );
-        })}
-        {nodes.map((node) => {
-          const x = offsetX + (node.position.x - minX) * scale;
-          const y = offsetY + (node.position.y - minY) * scale;
-          const miniWidth = nodeWidth * scale;
-          const miniHeight = nodeHeight * scale;
-          const name = typeof node.data.miniLabel === "string" ? node.data.miniLabel : "Dependency node";
-          return (
-            <g key={node.id}>
-              <title>{name}</title>
-              <rect
-                className="graph-mini-node"
-                x={x}
-                y={y}
-                width={miniWidth}
-                height={miniHeight}
-                rx={Math.min(3, miniHeight / 4)}
-                style={{ fill: typeof node.data.miniColor === "string" ? node.data.miniColor : "#38bdf8" }}
-              />
-              {miniWidth > 26 && miniHeight > 8 && (
-                <text className="graph-mini-label" x={x + 3} y={y + miniHeight / 2}>
-                  {name.length > 18 ? `${name.slice(0, 17)}…` : name}
-                </text>
-              )}
-            </g>
-          );
-        })}
-        <rect
-          className="graph-mini-viewport"
-          x={viewportX}
-          y={viewportY}
-          width={viewportWidth}
-          height={viewportHeight}
-          rx={2}
-        />
-      </svg>
-    </div>
-  );
-}
-
 type GraphResponse = {
   organizationId: string;
   nodes: GraphNode[];
   edges: GraphEdge[];
+  warnings?: string[];
   stats: {
     totalNodes: number;
     totalEdges: number;
@@ -166,6 +75,12 @@ type EntityType = {
   id: string;
   name: string;
   color: string;
+};
+
+type RelationshipTypeRecord = {
+  id: string;
+  name: string;
+  createdAt?: string;
 };
 
 const entityTypeColorPresets = [
@@ -179,19 +94,25 @@ const entityTypeColorPresets = [
 
 type ImpactEntity = GraphNode & {
   depth: number;
+  relationshipTypes?: string[];
 };
 
 type ImpactResponse = {
   rootEntity: GraphNode;
   totalAffected: number;
   affectedEntities: ImpactEntity[];
+  warnings?: string[];
 };
 
 type Incident = {
   id: string; organizationId: string; affectedEntityId: string; createdById: string;
+  investigatedById: string | null; resolvedById: string | null;
   title: string; description: string | null; severity: "LOW" | "MEDIUM" | "HIGH" | "CRITICAL";
   status: "OPEN" | "INVESTIGATING" | "RESOLVED"; createdAt: string; updatedAt: string; resolvedAt: string | null;
-  affectedEntity: GraphNode & { entityType: { id: string; name: string } }; createdBy: UserSummary;
+  affectedEntity: GraphNode & { entityType: { id: string; name: string } };
+  createdBy: UserSummary;
+  investigatedBy: UserSummary | null;
+  resolvedBy: UserSummary | null;
 };
 
 type IncidentForm = { title: string; description: string; affectedEntityId: string; severity: Incident["severity"] };
@@ -329,14 +250,6 @@ const emptyRelationshipForm: RelationshipForm = {
   relationshipType: "DEPENDS_ON",
 };
 
-const relationshipTypes = [
-  "DEPENDS_ON",
-  "CALLS",
-  "USES",
-  "RUNS_ON",
-  "CONTAINS",
-];
-
 
 type Team = {
   id: string;
@@ -433,6 +346,17 @@ type ApprovalRequest = {
   user?: UserSummary;
 };
 
+type IncidentNotification = {
+  id: string;
+  organizationId: string;
+  incidentId: string | null;
+  type: "INCIDENT_CREATED" | "INCIDENT_STATUS_CHANGED";
+  title: string;
+  message: string;
+  createdAt: string;
+  readAt: string | null;
+};
+
 type MembershipForm = {
   email: string;
 };
@@ -461,7 +385,7 @@ function App() {
     localStorage.setItem("orgimpact-theme", theme);
   }, [theme]);
 
-  const organizationId = localStorage.getItem("organizationId") || "e9cd3e97-f509-4a60-a8c8-390f2b9dd8a6";
+  const organizationId = localStorage.getItem("organizationId") || "";
   const [token, setToken] = useState<string | null>(
     localStorage.getItem("token"),
   );
@@ -473,6 +397,7 @@ function App() {
     useState<ActiveView>("dashboard");
 
   const [graph, setGraph] = useState<GraphResponse | null>(null);
+  const graphRequestId = useRef(0);
   const [entityTypes, setEntityTypes] = useState<EntityType[]>([]);
   const [entityTypesError, setEntityTypesError] = useState("");
   const [entityTypesModalOpen, setEntityTypesModalOpen] = useState(false);
@@ -480,9 +405,17 @@ function App() {
   const [entityTypeForm, setEntityTypeForm] = useState({ name: "", color: "#2563EB" });
   const [entityTypeSaving, setEntityTypeSaving] = useState(false);
   const entityTypesRequestId = useRef(0);
+  const [relationshipTypes, setRelationshipTypes] = useState<RelationshipTypeRecord[]>([]);
+  const [relationshipTypesLoading, setRelationshipTypesLoading] = useState(false);
+  const [relationshipTypeError, setRelationshipTypeError] = useState("");
+  const [relationshipTypeName, setRelationshipTypeName] = useState("");
+  const [relationshipTypeSaving, setRelationshipTypeSaving] = useState(false);
+  const relationshipTypesRequestId = useRef(0);
 
   const [selectedEntity, setSelectedEntity] =
     useState<GraphNode | null>(null);
+  const [hoveredGraphEdgeId, setHoveredGraphEdgeId] = useState<string | null>(null);
+  const [relationshipLabelsVisible, setRelationshipLabelsVisible] = useState(true);
   const [impact, setImpact] =
     useState<ImpactResponse | null>(null);
 
@@ -498,8 +431,14 @@ function App() {
 
   const [reactFlowInstance, setReactFlowInstance] =
     useState<ReactFlowInstance | null>(null);
+  const [pendingGraphFocusId, setPendingGraphFocusId] = useState<string | null>(null);
   const [focusedEntityId, setFocusedEntityId] =
     useState<string | null>(null);
+  const [manualGraphPositions, setManualGraphPositions] = useState<Map<string, { x: number; y: number }>>(() => new Map());
+  const [graphNodeMeasurements, setGraphNodeMeasurements] = useState<Map<string, { width: number; height: number }>>(() => new Map());
+  const [graphDragging, setGraphDragging] = useState(false);
+  const [graphSearch, setGraphSearch] = useState("");
+  const [showImpactPanel, setShowImpactPanel] = useState(true);
 
   const [entityModalOpen, setEntityModalOpen] =
     useState(false);
@@ -560,6 +499,8 @@ function App() {
   const [chatReadAtByConversation, setChatReadAtByConversation] = useState<Record<string, string>>({});
   const [profileMenuOpen, setProfileMenuOpen] = useState(false);
   const [approvalRequests, setApprovalRequests] = useState<ApprovalRequest[]>([]);
+  const [incidentNotifications, setIncidentNotifications] = useState<IncidentNotification[]>([]);
+  const [incidentNotificationUnreadCount, setIncidentNotificationUnreadCount] = useState(0);
   const [notificationOpen, setNotificationOpen] = useState(false);
   const [approvalActionId, setApprovalActionId] = useState<string | null>(null);
   const [notificationError, setNotificationError] = useState("");
@@ -572,6 +513,7 @@ function App() {
   } | null>(null);
   const profileMenuRef = useRef<HTMLDivElement | null>(null);
   const profileMenuPanelRef = useRef<HTMLDivElement | null>(null);
+  const notificationControlRef = useRef<HTMLDivElement | null>(null);
   const simulationFilterRef = useRef<HTMLDivElement | null>(null);
   const chatBottomRef = useRef<HTMLDivElement | null>(null);
   const chatPendingMessageRef = useRef<{ content: string; id: string } | null>(null);
@@ -654,8 +596,12 @@ function App() {
 
   async function loadGraph() {
     const currentToken = localStorage.getItem("token");
+    const requestedOrganizationId = organizationId;
+    const requestId = ++graphRequestId.current;
 
-    if (!currentToken) {
+    if (!currentToken || !organizationId) {
+      setGraph(null);
+      setError("");
       setLoading(false);
       return;
     }
@@ -665,7 +611,7 @@ function App() {
       setError("");
 
       const response = await fetch(
-        `${API_BASE_URL}/graph/organization/${organizationId}`,
+        `${API_BASE_URL}/graph/organization/${requestedOrganizationId}`,
         { headers: getAuthHeaders() },
       );
 
@@ -680,35 +626,54 @@ function App() {
       }
 
       if (!response.ok) {
-        throw new Error(`Backend returned ${response.status}`);
+        const data = await response.json().catch(() => null);
+        throw new Error(data?.error || `Backend returned ${response.status}`);
       }
 
       const data: GraphResponse = await response.json();
+      if (requestId !== graphRequestId.current || requestedOrganizationId !== localStorage.getItem("organizationId")) return;
+      if (data.organizationId !== requestedOrganizationId) {
+        throw new Error("The graph response did not match the selected organization.");
+      }
+      const validNodeIds = new Set(data.nodes.map((node) => node.id));
+      setManualGraphPositions((current) => new Map([...current].filter(([id]) => validNodeIds.has(id))));
+      setGraphNodeMeasurements((current) => new Map([...current].filter(([id]) => validNodeIds.has(id))));
       setGraph(data);
     } catch (err) {
-      console.error(err);
-      setError(
-        err instanceof Error
-          ? err.message
-          : "Unable to load the organization graph.",
-      );
+      if (requestId === graphRequestId.current) {
+        console.error(err);
+        setError(err instanceof Error ? err.message : "Unable to load the organization graph.");
+      }
     } finally {
-      setLoading(false);
+      if (requestId === graphRequestId.current) setLoading(false);
     }
   }
 
   useEffect(() => {
-    if (!token) {
+    graphRequestId.current += 1;
+    setGraph(null);
+    setManualGraphPositions(new Map());
+    setSelectedEntity(null);
+    setImpact(null);
+    setFocusedEntityId(null);
+  }, [organizationId]);
+
+  useEffect(() => {
+    if (!token || !organizationId) {
       return;
     }
 
     const handleEntityTypeChanged = () => {
       void loadEntityTypes();
+      void loadRelationshipTypes();
       void loadGraph();
     };
     socket.on("ENTITY_TYPE_CREATED", handleEntityTypeChanged);
     socket.on("ENTITY_TYPE_UPDATED", handleEntityTypeChanged);
     socket.on("ENTITY_TYPE_DELETED", handleEntityTypeChanged);
+    const handleRelationshipTypeChanged = () => { void loadRelationshipTypes(); };
+    socket.on("RELATIONSHIP_TYPE_CREATED", handleRelationshipTypeChanged);
+    socket.on("RELATIONSHIP_TYPE_DELETED", handleRelationshipTypeChanged);
 
     const handleEntityCreated = () => {
       void loadGraph();
@@ -751,6 +716,8 @@ function App() {
     socket.on("INCIDENT_CREATED", handleIncidentCreated);
     socket.on("INCIDENT_UPDATED", handleIncidentUpdated);
     socket.on("INCIDENT_DELETED", handleIncidentDeleted);
+    const handleNotificationsUpdated = () => { void loadIncidentNotifications(); };
+    socket.on("NOTIFICATIONS_UPDATED", handleNotificationsUpdated);
 
     return () => {
       socket.off("ENTITY_CREATED", handleEntityCreated);
@@ -762,9 +729,12 @@ function App() {
       socket.off("INCIDENT_CREATED", handleIncidentCreated);
       socket.off("INCIDENT_UPDATED", handleIncidentUpdated);
       socket.off("INCIDENT_DELETED", handleIncidentDeleted);
+      socket.off("NOTIFICATIONS_UPDATED", handleNotificationsUpdated);
       socket.off("ENTITY_TYPE_CREATED", handleEntityTypeChanged);
       socket.off("ENTITY_TYPE_UPDATED", handleEntityTypeChanged);
       socket.off("ENTITY_TYPE_DELETED", handleEntityTypeChanged);
+      socket.off("RELATIONSHIP_TYPE_CREATED", handleRelationshipTypeChanged);
+      socket.off("RELATIONSHIP_TYPE_DELETED", handleRelationshipTypeChanged);
     };
   }, [token, organizationId]);
 
@@ -772,7 +742,7 @@ function App() {
     const requestId = ++entityTypesRequestId.current;
     const currentToken = localStorage.getItem("token");
 
-    if (!currentToken) {
+    if (!currentToken || !organizationId) {
       setEntityTypes([]);
       setEntityTypesLoading(false);
       return;
@@ -814,6 +784,46 @@ function App() {
       if (requestId === entityTypesRequestId.current) {
         setEntityTypesLoading(false);
       }
+    }
+  }
+
+  async function loadRelationshipTypes() {
+    const requestId = ++relationshipTypesRequestId.current;
+    const requestedOrganizationId = organizationId;
+    const currentToken = localStorage.getItem("token");
+
+    if (!currentToken || !requestedOrganizationId) {
+      setRelationshipTypes([]);
+      setRelationshipTypesLoading(false);
+      return;
+    }
+
+    try {
+      setRelationshipTypesLoading(true);
+      setRelationshipTypeError("");
+      const response = await fetch(
+        API_BASE_URL + "/relationship-types/organization/" + requestedOrganizationId,
+        { headers: getAuthHeaders() },
+      );
+      if (await handleUnauthorized(response)) {
+        throw new Error("Authentication failed. Please login again.");
+      }
+      if (!response.ok) {
+        const data = await response.json().catch(() => null);
+        throw new Error(data?.error || "Unable to load relationship types (" + response.status + ")");
+      }
+      const data: RelationshipTypeRecord[] = await response.json();
+      if (requestId === relationshipTypesRequestId.current &&
+          requestedOrganizationId === localStorage.getItem("organizationId")) {
+        setRelationshipTypes(Array.isArray(data) ? data : []);
+      }
+    } catch (error) {
+      if (requestId === relationshipTypesRequestId.current) {
+        console.error(error);
+        setRelationshipTypeError(error instanceof Error ? error.message : "Unable to load relationship types.");
+      }
+    } finally {
+      if (requestId === relationshipTypesRequestId.current) setRelationshipTypesLoading(false);
     }
   }
 
@@ -905,6 +915,66 @@ function App() {
     }
   }
 
+  async function loadIncidentNotifications() {
+    const currentToken = localStorage.getItem("token");
+    if (!currentToken || !organizationId) {
+      setIncidentNotifications([]);
+      setIncidentNotificationUnreadCount(0);
+      return;
+    }
+    try {
+      const response = await fetch(`${API_BASE_URL}/notifications/organization/${organizationId}`, {
+        headers: getAuthHeaders(),
+      });
+      if (await handleUnauthorized(response)) return;
+      const data = await response.json().catch(() => null);
+      if (!response.ok) throw new Error(data?.error || "Unable to load notifications.");
+      setIncidentNotifications(Array.isArray(data?.notifications) ? data.notifications : []);
+      setIncidentNotificationUnreadCount(Number(data?.unreadCount) || 0);
+      setNotificationError("");
+    } catch (error) {
+      setNotificationError(error instanceof Error ? error.message : "Unable to load notifications.");
+    }
+  }
+
+  async function openIncidentNotification(notification: IncidentNotification) {
+    try {
+      if (!notification.readAt) {
+        const response = await fetch(`${API_BASE_URL}/notifications/organization/${organizationId}/${notification.id}/read`, {
+          method: "PATCH",
+          headers: getAuthHeaders(),
+        });
+        if (await handleUnauthorized(response)) return;
+        const data = await response.json().catch(() => null);
+        if (!response.ok) throw new Error(data?.error || "Unable to mark notification as read.");
+        setIncidentNotifications((current) => current.map((item) => item.id === notification.id ? data : item));
+        setIncidentNotificationUnreadCount((count) => Math.max(0, count - 1));
+      }
+      setNotificationOpen(false);
+      setActiveView("incidents");
+    } catch (error) {
+      setNotificationError(error instanceof Error ? error.message : "Unable to open notification.");
+    }
+  }
+
+  async function markAllIncidentNotificationsRead() {
+    if (incidentNotificationUnreadCount === 0) return;
+    try {
+      const response = await fetch(`${API_BASE_URL}/notifications/organization/${organizationId}/read-all`, {
+        method: "PATCH",
+        headers: getAuthHeaders(),
+      });
+      if (await handleUnauthorized(response)) return;
+      const data = await response.json().catch(() => null);
+      if (!response.ok) throw new Error(data?.error || "Unable to mark notifications as read.");
+      const readAt = new Date().toISOString();
+      setIncidentNotifications((current) => current.map((item) => item.readAt ? item : { ...item, readAt }));
+      setIncidentNotificationUnreadCount(0);
+    } catch (error) {
+      setNotificationError(error instanceof Error ? error.message : "Unable to mark notifications as read.");
+    }
+  }
+
   async function loadApprovalRequests() {
     const currentToken = localStorage.getItem("token");
     if (!currentToken) {
@@ -962,6 +1032,15 @@ function App() {
       setApprovalActionId(null);
     }
   }
+
+  useEffect(() => {
+    if (!token || !organizationId) {
+      setIncidentNotifications([]);
+      setIncidentNotificationUnreadCount(0);
+      return;
+    }
+    void loadIncidentNotifications();
+  }, [token, organizationId]);
 
   useEffect(() => {
     if (!token) {
@@ -1397,101 +1476,94 @@ function App() {
   useEffect(() => {
     setEntityTypes([]);
     setEntityTypesError("");
+    relationshipTypesRequestId.current += 1;
+    setRelationshipTypes([]);
+    setRelationshipTypeError("");
+    setRelationshipTypeName("");
   }, [organizationId]);
 
   useEffect(() => {
-    if (!token) {
+    if (!token || !organizationId) {
       setLoading(false);
       return;
     }
 
     void loadGraph();
     void loadEntityTypes();
+    void loadRelationshipTypes();
   }, [token, organizationId]);
 
-  const affectedIds = useMemo(() => {
-    if (!impact) {
-      return new Set<string>();
-    }
-
-    return new Set(
-      impact.affectedEntities.map((entity) => entity.id),
-    );
-  }, [impact]);
+  const validatedRelationships = useMemo(
+    () => filterValidGraphRelationships(graph?.nodes ?? [], graph?.edges ?? []),
+    [graph],
+  );
+  const graphWarnings = useMemo(
+    () => [...(graph?.warnings ?? []), ...validatedRelationships.warnings],
+    [graph?.warnings, validatedRelationships],
+  );
+  const automaticNodePositions = useMemo(
+    () => layoutGraphNodes(graph?.nodes ?? [], validatedRelationships.edges),
+    [graph, validatedRelationships],
+  );
+  const nodePositions = useMemo(
+    () => new Map([...automaticNodePositions].map(([id, position]) => [id, { ...position, ...manualGraphPositions.get(id) }])),
+    [automaticNodePositions, manualGraphPositions],
+  );
+  const visibleEntityIds = useMemo(() => {
+    const query = graphSearch.trim().toLocaleLowerCase();
+    return new Set((graph?.nodes ?? []).filter((entity) =>
+      (!query || `${entity.name} ${entity.entityType} ${entity.description ?? ""}`.toLocaleLowerCase().includes(query))
+    ).map((entity) => entity.id));
+  }, [graph, graphSearch]);
+  const visibleRelationships = useMemo(
+    () => validatedRelationships.edges.filter((edge) => visibleEntityIds.has(edge.source) && visibleEntityIds.has(edge.target)),
+    [validatedRelationships, visibleEntityIds],
+  );
+  const relationshipDisplay = useMemo(
+    () => deriveGraphRelationshipDisplay(
+      visibleRelationships,
+      selectedEntity?.id,
+      nodePositions,
+      !graphDragging,
+      validatedRelationships.edges,
+    ),
+    [visibleRelationships, validatedRelationships, selectedEntity?.id, nodePositions, graphDragging],
+  );
+  const { incomingSourceIds } = relationshipDisplay;
+  const graphPortsByEntity = useMemo(() => {
+    const ports = new Map<string, { sourceHandles: Array<{ id: string; top: number; side: "left" | "right" | "top" | "bottom" }>; targetHandles: Array<{ id: string; top: number; side: "left" | "right" | "top" | "bottom" }> }>();
+    relationshipDisplay.visualEdges.forEach((edge) => {
+      const source = ports.get(edge.source) ?? { sourceHandles: [], targetHandles: [] };
+      source.sourceHandles.push({ id: edge.sourceHandle, top: edge.sourcePortTop, side: edge.sourceSide });
+      ports.set(edge.source, source);
+      const target = ports.get(edge.target) ?? { sourceHandles: [], targetHandles: [] };
+      target.targetHandles.push({ id: edge.targetHandle, top: edge.targetPortTop, side: edge.targetSide });
+      ports.set(edge.target, target);
+    });
+    return ports;
+  }, [relationshipDisplay]);
 
   const nodes: Node[] = useMemo(() => {
     if (!graph) {
       return [];
     }
 
-    const incomingCount = new Map<string, number>();
+    const orderedNodes = [...graph.nodes].sort((left, right) => left.name.localeCompare(right.name));
 
-    graph.nodes.forEach((node) => {
-      incomingCount.set(node.id, 0);
-    });
-
-    graph.edges.forEach((edge) => {
-      incomingCount.set(
-        edge.target,
-        (incomingCount.get(edge.target) ?? 0) + 1,
-      );
-    });
-
-    const roots = graph.nodes
-      .filter(
-        (node) => (incomingCount.get(node.id) ?? 0) === 0,
-      )
-      .map((node) => node.id);
-
-    const levels = new Map<string, number>();
-    const queue = roots.map((id) => ({ id, level: 0 }));
-
-    while (queue.length > 0) {
-      const current = queue.shift();
-
-      if (!current) {
-        break;
-      }
-
-      const existingLevel = levels.get(current.id);
-
-      if (
-        existingLevel !== undefined &&
-        existingLevel >= current.level
-      ) {
-        continue;
-      }
-
-      levels.set(current.id, current.level);
-
-      graph.edges
-        .filter((edge) => edge.source === current.id)
-        .forEach((edge) => {
-          queue.push({
-            id: edge.target,
-            level: current.level + 1,
-          });
-        });
-    }
-
-    graph.nodes.forEach((node) => {
-      if (!levels.has(node.id)) {
-        levels.set(node.id, 0);
-      }
-    });
-
-    const levelCounts = new Map<number, number>();
-
-    return graph.nodes.map((entity) => {
-      const level = levels.get(entity.id) ?? 0;
-      const row = levelCounts.get(level) ?? 0;
-      levelCounts.set(level, row + 1);
+    return orderedNodes.map((entity) => {
+      const position = nodePositions.get(entity.id) ?? { x: 80, y: 80, width: 230, height: 112 };
+      const measured = graphNodeMeasurements.get(entity.id);
+      const width = position.width ?? 230;
+      const height = position.height ?? 112;
+      const entityType = entity.entityType || "Unknown type";
+      const criticality = entity.criticality || "LOW";
+      const ports = graphPortsByEntity.get(entity.id) ?? { sourceHandles: [], targetHandles: [] };
 
       const isSelected = selectedEntity?.id === entity.id;
-      const isAffected = affectedIds.has(entity.id);
+      const isAffected = incomingSourceIds.has(entity.id);
       const isFocused = focusedEntityId === entity.id;
 
-      const type = entity.entityType.toUpperCase();
+      const type = entityType.toUpperCase();
       let typeClass = "graph-node-default";
       let icon = "•";
 
@@ -1511,13 +1583,16 @@ function App() {
 
       return {
         id: entity.id,
-        position: {
-          x: level * 320 + 80,
-          y: row * 180 + 80,
-        },
+        type: "graphEntity",
+        position: { x: position.x, y: position.y },
+        ...(measured ? { measured } : {}),
+        sourcePosition: Position.Right,
+        targetPosition: Position.Left,
         data: {
           miniLabel: entity.name,
           miniColor: entity.entityTypeColor ?? "#64748b",
+          sourceHandles: ports.sourceHandles,
+          targetHandles: ports.targetHandles,
           label: (
             <div
               className={[
@@ -1527,7 +1602,7 @@ function App() {
                 isAffected ? "is-affected" : "",
                 isFocused ? "is-focused" : "",
               ].join(" ")}
-              style={entity.entityTypeColor ? { borderLeftColor: entity.entityTypeColor } : undefined}
+              style={{ height, ...(entity.entityTypeColor ? { borderLeftColor: entity.entityTypeColor } : {}) }}
             >
               <div
                 className="node-icon"
@@ -1539,7 +1614,7 @@ function App() {
 
               <div className="node-content">
                 <div className="node-type">
-                  {entity.entityType}
+                  {entityType}
                 </div>
 
                 <div className="node-name">
@@ -1551,12 +1626,16 @@ function App() {
                     {entity.description}
                   </div>
                 )}
+                <span className={`node-risk-indicator risk-${String(criticality).toLowerCase()}`}>
+                  {criticality}
+                </span>
               </div>
             </div>
           ),
         },
         style: {
-          width: 230,
+          width,
+          height,
           padding: 0,
           border: "none",
           background: "transparent",
@@ -1565,50 +1644,83 @@ function App() {
         className: entity.entityTypeColor ? "has-custom-type-color" : undefined,
       };
     });
-  }, [graph, selectedEntity, affectedIds, focusedEntityId]);
+  }, [graph, nodePositions, graphNodeMeasurements, graphPortsByEntity, selectedEntity, incomingSourceIds, focusedEntityId]);
 
   const edges: Edge[] = useMemo(() => {
     if (!graph) {
       return [];
     }
 
-    return graph.edges.map((relationship) => {
-      const sourceAffected = affectedIds.has(
-        relationship.source,
-      );
-      const targetAffected = affectedIds.has(
-        relationship.target,
-      );
-      const highlighted = sourceAffected || targetAffected;
+    const edgeOrder = [...relationshipDisplay.visualEdges].sort((left, right) => left.id.localeCompare(right.id));
+    const zIndexById = new Map(edgeOrder.map((edge, index) => [edge.id, 1 + index / (edgeOrder.length + 1)]));
+    return relationshipDisplay.visualEdges.map((relationship) => {
+      const highlighted = relationship.isIncoming;
+      const isParallel = relationship.parallelCount > 1;
 
       return {
         id: relationship.id,
         source: relationship.source,
         target: relationship.target,
-        type: "smoothstep",
-        label: relationship.relationshipType,
+        sourceHandle: relationship.sourceHandle,
+        targetHandle: relationship.targetHandle,
+        type: "dependency",
+        data: {
+          points: relationship.points,
+          crossings: relationship.crossings,
+            labelPosition: relationship.labelPosition,
+          relationshipType: relationship.relationshipType,
+          relationshipLabel: relationship.relationshipLabel,
+          relationshipIds: relationship.relationshipIds,
+          forwardRelationshipTypes: relationship.forwardRelationshipTypes,
+          reverseRelationshipTypes: relationship.reverseRelationshipTypes,
+          bidirectional: relationship.bidirectional,
+          showLabel: (relationshipDisplay.visualEdges.length <= 12 && relationshipLabelsVisible) || hoveredGraphEdgeId === relationship.id,
+        },
         animated: highlighted,
+        ...(relationship.bidirectional ? {
+          markerStart: {
+            type: MarkerType.ArrowClosed,
+            width: 18,
+            height: 18,
+            color: relationship.sourceArrowIncoming ? "#fb923c" : "#6d94c7",
+          },
+        } : {}),
         markerEnd: {
           type: MarkerType.ArrowClosed,
           width: 18,
           height: 18,
+          color: relationship.targetArrowIncoming ? "#fb923c" : "#6d94c7",
         },
         style: {
-          strokeWidth: highlighted ? 3 : 2,
+          stroke: highlighted ? "#fb923c" : "#6d94c7",
+          strokeWidth: highlighted ? 2.8 : 2,
+          strokeDasharray: isParallel && relationship.parallelIndex % 2 === 1 ? "6 4" : undefined,
         },
-        labelStyle: {
-          fontSize: 9,
-          fontWeight: 800,
-          fill: "#cbd5e1",
-        },
-        labelBgStyle: {
-          fill: "#020617",
-          borderRadius: 6,
-        },
-        labelBgPadding: [10, 5] as [number, number],
+        zIndex: zIndexById.get(relationship.id) ?? 1,
       };
     });
-  }, [graph, affectedIds]);
+  }, [graph, relationshipDisplay, hoveredGraphEdgeId, relationshipLabelsVisible]);
+
+  const visibleNodes = useMemo(
+    () => nodes.filter((node) => visibleEntityIds.has(node.id)),
+    [nodes, visibleEntityIds],
+  );
+  const visibleEdges = useMemo(
+    () => edges.filter((edge) =>
+      visibleEntityIds.has(edge.source) &&
+      visibleEntityIds.has(edge.target)
+    ),
+    [edges, visibleEntityIds],
+  );
+  const currentOrganizationName = currentUser?.memberships?.find(
+    (membership) => membership.organizationId === organizationId,
+  )?.organization?.name ?? "Organization";
+  const infrastructureEntityCount = (graph?.nodes ?? []).filter(
+    (entity) => entity.entityType.toLocaleLowerCase().includes("infrastructure"),
+  ).length;
+  const serviceEntityCount = (graph?.nodes ?? []).filter(
+    (entity) => entity.entityType.toLocaleLowerCase() === "service",
+  ).length;
 
   async function analyzeImpact(entityId: string) {
     try {
@@ -1690,6 +1802,39 @@ function App() {
     });
   }
 
+  function handleIncidentAffectedEntityClick(entityId: string) {
+    const entity = graph?.nodes.find((item) => item.id === entityId);
+    if (!entity) return;
+
+    setSelectedEntity(entity);
+    setImpact(null);
+    setImpactError("");
+    setFocusedEntityId(entityId);
+    setGraphSearch("");
+    setPendingGraphFocusId(entityId);
+    setActiveView("dashboard");
+    void analyzeImpact(entityId);
+  }
+
+  useEffect(() => {
+    if (activeView !== "dashboard" || !pendingGraphFocusId || !reactFlowInstance) return;
+    const graphNode = nodes.find((node) => node.id === pendingGraphFocusId);
+    if (!graphNode) return;
+
+    const frame = requestAnimationFrame(() => {
+      reactFlowInstance.fitView({
+        nodes: [graphNode],
+        padding: 0.6,
+        duration: 600,
+        minZoom: 0.8,
+        maxZoom: 1.5,
+      });
+      setFocusedEntityId(pendingGraphFocusId);
+      setPendingGraphFocusId(null);
+    });
+    return () => cancelAnimationFrame(frame);
+  }, [activeView, pendingGraphFocusId, reactFlowInstance, nodes]);
+
   const handleNodeClick: NodeMouseHandler = (_event, node) => {
     const entity = graph?.nodes.find(
       (item) => item.id === node.id,
@@ -1705,6 +1850,37 @@ function App() {
     setFocusedEntityId(entity.id);
 
     void analyzeImpact(entity.id);
+  };
+
+  const handleGraphNodesChange = (changes: NodeChange<Node>[]) => {
+    const movedNodes = changes.filter((change) => change.type === "position" && change.position);
+    const measuredNodes = changes.filter((change) => change.type === "dimensions" && change.dimensions);
+    const dragStateChange = changes.find((change) => change.type === "position" && change.dragging !== undefined);
+
+    if (dragStateChange?.type === "position") setGraphDragging(Boolean(dragStateChange.dragging));
+
+    if (movedNodes.length) {
+      setManualGraphPositions((current) => {
+        const next = new Map(current);
+        movedNodes.forEach((change) => {
+          if (change.type === "position" && change.position) next.set(change.id, change.position);
+        });
+        return next;
+      });
+    }
+
+    // Preserve React Flow measurements in the controlled node props when positions change.
+    if (measuredNodes.length) {
+      setGraphNodeMeasurements((current) => {
+        const next = new Map(current);
+        measuredNodes.forEach((change) => {
+          if (change.type === "dimensions" && change.dimensions) {
+            next.set(change.id, change.dimensions);
+          }
+        });
+        return next;
+      });
+    }
   };
 
   async function handleLogin(newToken: string) {
@@ -1782,6 +1958,11 @@ function App() {
       setEntityTypesError("Choose a valid six-digit hex color.");
       return;
     }
+    const normalizedName = name.toLocaleLowerCase();
+    if (entityTypes.some((type) => type.id !== editingEntityType?.id && type.name.trim().toLocaleLowerCase() === normalizedName)) {
+      setEntityTypesError("An entity type with this name already exists in this organization.");
+      return;
+    }
 
     try {
       setEntityTypeSaving(true);
@@ -1805,7 +1986,7 @@ function App() {
       }
       const data = await response.json().catch(() => null);
       if (!response.ok) {
-        throw new Error(data?.error || "Unable to save entity type.");
+        throw new Error(data?.message || data?.error || "Unable to save entity type.");
       }
       setEditingEntityType(null);
       setEntityTypeForm({ name: "", color: "#2563EB" });
@@ -2021,13 +2202,80 @@ function App() {
     }
   }
 
+  async function createRelationshipType() {
+    const name = relationshipTypeName.trim().toLocaleUpperCase();
+    if (!name) {
+      setRelationshipTypeError("Relationship type name is required.");
+      return;
+    }
+    if (relationshipTypes.some((type) => type.name.trim().toLocaleUpperCase() === name)) {
+      setRelationshipTypeError("This relationship type already exists in this organization.");
+      return;
+    }
+
+    try {
+      setRelationshipTypeSaving(true);
+      setRelationshipTypeError("");
+      const response = await fetch(API_BASE_URL + "/relationship-types", {
+        method: "POST",
+        headers: getAuthHeaders(),
+        body: JSON.stringify({ organizationId, name }),
+      });
+      if (await handleUnauthorized(response)) {
+        throw new Error("Authentication failed. Please login again.");
+      }
+      const data = await response.json().catch(() => null);
+      if (!response.ok) {
+        throw new Error(data?.error || data?.message || "Unable to create relationship type.");
+      }
+      setRelationshipTypeName("");
+      await loadRelationshipTypes();
+    } catch (error) {
+      setRelationshipTypeError(error instanceof Error ? error.message : "Unable to create relationship type.");
+    } finally {
+      setRelationshipTypeSaving(false);
+    }
+  }
+
+  async function deleteRelationshipType(relationshipType: RelationshipTypeRecord) {
+    try {
+      setRelationshipTypeSaving(true);
+      setRelationshipTypeError("");
+      const response = await fetch(API_BASE_URL + "/relationship-types/" + relationshipType.id, {
+        method: "DELETE",
+        headers: getAuthHeaders(),
+      });
+      if (await handleUnauthorized(response)) {
+        throw new Error("Authentication failed. Please login again.");
+      }
+      const data = response.status === 204 ? null : await response.json().catch(() => null);
+      if (!response.ok) {
+        throw new Error(data?.error || data?.message || "Unable to delete relationship type.");
+      }
+      await loadRelationshipTypes();
+    } catch (error) {
+      setRelationshipTypeError(error instanceof Error ? error.message : "Unable to delete relationship type.");
+    } finally {
+      setRelationshipTypeSaving(false);
+    }
+  }
+
+  function confirmDeleteRelationshipType(relationshipType: RelationshipTypeRecord) {
+    setConfirmDialog({
+      title: "Delete relationship type?",
+      message: "Delete \"" + relationshipType.name + "\"? Types assigned to relationships cannot be deleted.",
+      confirmLabel: "Delete type",
+      onConfirm: () => { void deleteRelationshipType(relationshipType); },
+    });
+  }
+
   function openCreateRelationship() {
     const entities = graph?.nodes ?? [];
 
     setRelationshipForm({
       sourceEntityId: entities[0]?.id ?? "",
       targetEntityId: entities[1]?.id ?? "",
-      relationshipType: "DEPENDS_ON",
+      relationshipType: relationshipTypes[0]?.name ?? "DEPENDS_ON",
     });
     setRelationshipError("");
     setRelationshipModalOpen(true);
@@ -2056,6 +2304,15 @@ function App() {
       setRelationshipError("Source and target entities must be different.");
       return;
     }
+    if (!relationshipTypes.some((type) => type.name === relationshipType)) {
+      setRelationshipError("Choose a relationship type managed by this organization.");
+      return;
+    }
+    const normalizedType = relationshipType.trim().toLocaleUpperCase();
+    if (graph?.edges.some((edge) => edge.source === sourceEntityId && edge.target === targetEntityId && edge.relationshipType.trim().toLocaleUpperCase() === normalizedType)) {
+      setRelationshipError("This relationship already exists between these entities.");
+      return;
+    }
 
     try {
       setRelationshipSaving(true);
@@ -2080,8 +2337,8 @@ function App() {
 
       if (!response.ok) {
         throw new Error(
-          data?.error ||
-            data?.message ||
+          data?.message ||
+            data?.error ||
             "Unable to create relationship.",
         );
       }
@@ -2090,7 +2347,7 @@ function App() {
       setRelationshipForm(emptyRelationshipForm);
       setRelationshipError("");
       setConfirmDialog(null);
-      // await loadGraph();
+      await loadGraph();
     } catch (err) {
       console.error(err);
       setRelationshipError(
@@ -2468,6 +2725,11 @@ function App() {
         setProfileMenuOpen(false);
       }
 
+      const notificationControl = notificationControlRef.current;
+      if (!notificationControl || !notificationControl.contains(event.target) && !path.includes(notificationControl)) {
+        setNotificationOpen(false);
+      }
+
       if (simulationFilterRef.current && !simulationFilterRef.current.contains(event.target)) {
         setSimulationFilterOpen(false);
       }
@@ -2811,8 +3073,19 @@ function App() {
   const currentMembershipRole = currentUser?.memberships?.find(
     (membership) => membership.organizationId === organizationId,
   )?.role;
+  const canChangeIncidentStatus = (incident: Incident) => {
+    const role = currentOrganizationRole || currentMembershipRole;
+    if (role === "OWNER" || role === "ADMIN") return true;
+    if (!currentUser) return false;
+    if (incident.status === "OPEN") return true;
+    if (incident.createdById === currentUser.id) return true;
+    return incident.status === "INVESTIGATING"
+      ? incident.investigatedById === currentUser.id
+      : incident.resolvedById === currentUser.id;
+  };
   const canManageEntityTypes = ["OWNER", "ADMIN"].includes(currentOrganizationRole || currentMembershipRole || "") ||
     isOrganizationCreator(organizationId);
+  const canManageRelationshipTypes = canManageEntityTypes;
   const canCreateTeams = canManageTeams || currentOrganizationRole === "ADMIN";
   const assignedTeamMemberIds = new Set(teams.flatMap((team) => (team.members ?? []).map((member) => member.userId)));
   const unassignedOrganizationMembers = organizationMembers.filter((member) => !assignedTeamMemberIds.has(member.userId));
@@ -2873,7 +3146,6 @@ function App() {
             ["entities", "Entities", "entities"],
             ["relationships", "Relationships", "relationships"],
             ["teams", "Teams", "teams"],
-            ["chat", "Chat", "chat"],
             ["members", "Members", "members"],
             ["incidents", "Incidents", "incidents"],
             ["simulation", "Simulation", "simulation"],
@@ -2892,34 +3164,76 @@ function App() {
                 <NavIcon name={icon as NavIconName} />
               </span>
               <span className="nav-item-label">{label}</span>
-              {key === "chat" && totalChatUnread > 0 && <span className="nav-chat-unread">{totalChatUnread > 9 ? "9+" : totalChatUnread}</span>}
             </button>
           ))}
         </nav>
 
-        <div className="header-account" ref={profileMenuRef}>
-          {currentUser?.memberships?.some((membership) => membership.role === "OWNER") && (
-            <div className="notification-control">
-              <button
-                type="button"
-                className={`notification-button ${notificationOpen ? "open" : ""}`}
-                aria-label={`Approval requests${approvalRequests.length ? `, ${approvalRequests.length} pending` : ""}`}
-                aria-expanded={notificationOpen}
-                onClick={() => setNotificationOpen((open) => !open)}
-              >
-                <svg width="19" height="19" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
-                  <path d="M18 8a6 6 0 0 0-12 0c0 7-3 7-3 9h18c0-2-3-2-3-9" />
-                  <path d="M10 21h4" />
-                </svg>
-                {approvalRequests.length > 0 && <span className="notification-badge">{approvalRequests.length > 9 ? "9+" : approvalRequests.length}</span>}
-              </button>
-              {notificationOpen && (
-                <div className="approval-notification-menu">
-                  <div className="approval-notification-heading">
+        <div className="header-tools">
+          <button
+            type="button"
+            className={`chat-shortcut ${activeView === "chat" ? "active" : ""}`}
+            onClick={() => { setActiveView("chat"); setProfileMenuOpen(false); }}
+            aria-label={`Chat${totalChatUnread > 0 ? `, ${totalChatUnread} unread` : ""}`}
+            title="Chat"
+          >
+            <NavIcon name="chat" />
+            {totalChatUnread > 0 && <span className="nav-chat-unread">{totalChatUnread > 9 ? "9+" : totalChatUnread}</span>}
+          </button>
+
+          <div className="header-account" ref={profileMenuRef}>
+          <div className="notification-control" ref={notificationControlRef}>
+            <button
+              type="button"
+              className={`notification-button ${notificationOpen ? "open" : ""}`}
+              aria-label={`Notifications${incidentNotificationUnreadCount + approvalRequests.length ? `, ${incidentNotificationUnreadCount + approvalRequests.length} unread` : ""}`}
+              aria-expanded={notificationOpen}
+              onClick={() => {
+                setNotificationOpen((open) => !open);
+                if (!notificationOpen) {
+                  void loadIncidentNotifications();
+                  if (currentUser?.memberships?.some((membership) => membership.role === "OWNER")) void loadApprovalRequests();
+                }
+              }}
+            >
+              <svg width="19" height="19" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+                <path d="M18 8a6 6 0 0 0-12 0c0 7-3 7-3 9h18c0-2-3-2-3-9" />
+                <path d="M10 21h4" />
+              </svg>
+              {incidentNotificationUnreadCount + approvalRequests.length > 0 && <span className="notification-badge">{incidentNotificationUnreadCount + approvalRequests.length > 9 ? "9+" : incidentNotificationUnreadCount + approvalRequests.length}</span>}
+            </button>
+            {notificationOpen && (
+              <div className="approval-notification-menu">
+                <div className="approval-notification-heading">
+                  <strong>Notifications</strong>
+                  <span>{incidentNotificationUnreadCount} unread</span>
+                </div>
+                {notificationError && <div className="approval-notification-error">{notificationError}</div>}
+                <div className="approval-notification-heading notification-section-heading">
+                  <strong>Incidents</strong>
+                  {incidentNotificationUnreadCount > 0 && <button type="button" onClick={() => void markAllIncidentNotificationsRead()}>Mark all read</button>}
+                </div>
+                {incidentNotifications.length === 0 ? (
+                  <div className="approval-notification-empty">No incident notifications yet.</div>
+                ) : incidentNotifications.map((notification) => (
+                  <button
+                    type="button"
+                    className={`approval-notification-item incident-notification-item ${notification.readAt ? "read" : "unread"}`}
+                    key={notification.id}
+                    onClick={() => void openIncidentNotification(notification)}
+                  >
+                    <span className="incident-notification-dot" aria-hidden="true" />
+                    <span className="approval-notification-copy">
+                      <strong>{notification.title}</strong>
+                      <span>{notification.message}</span>
+                      <small>{new Date(notification.createdAt).toLocaleString()}</small>
+                    </span>
+                  </button>
+                ))}
+                {currentUser?.memberships?.some((membership) => membership.role === "OWNER") && <>
+                  <div className="approval-notification-heading notification-section-heading">
                     <strong>Join requests</strong>
                     <span>{approvalRequests.length} pending</span>
                   </div>
-                  {notificationError && <div className="approval-notification-error">{notificationError}</div>}
                   {approvalRequests.length === 0 ? (
                     <div className="approval-notification-empty">No approval requests right now.</div>
                   ) : approvalRequests.map((request) => (
@@ -2935,10 +3249,10 @@ function App() {
                       </div>
                     </div>
                   ))}
-                </div>
-              )}
-            </div>
-          )}
+                </>}
+              </div>
+            )}
+          </div>
           <div className="header-divider" />
           <button
             type="button"
@@ -3079,18 +3393,19 @@ function App() {
             </div>,
             document.body,
           )}
+          </div>
         </div>
       </header>
 
       <main className="main">
         {activeView === "dashboard" ? (
-          <>
-            <section className="stats">
+          <div className="dashboard-experience">
+            <section className="stats dashboard-stats">
               <div className="stat-card organization-stat">
                 <OrgImpactLogo compact showWordmark={false} className="organization-stat-logo" />
                 <div className="organization-stat-copy">
                   <span>Organization</span>
-                  <strong>OrgImpact Demo</strong>
+                  <strong>{currentOrganizationName}</strong>
                 </div>
               </div>
 
@@ -3111,45 +3426,38 @@ function App() {
                     ? "Loading"
                     : error
                       ? "Offline"
-                      : "Healthy"}
+                      : "Available"}
                 </strong>
               </div>
             </section>
 
-            <section className="workspace">
+            <section className={`workspace dashboard-workspace ${showImpactPanel ? "" : "impact-panel-closed"}`}>
               <section className="graph-section">
                 <div className="graph-header">
                   <div>
-                    <h2>Dependency Graph</h2>
-                    <p>
-                      Click an entity to inspect its dependencies and
-                      automatically analyze potential impact.
-                    </p>
+                    <div className="dashboard-graph-title-row"><span className="page-section-logo"><NavIcon name="dashboard" /></span><h2>Dependency graph</h2><span className="page-eyebrow">LIVE ORGANIZATION MAP</span></div>
+                    <p>Relationships come from this organization’s recorded data.</p>
                   </div>
 
-                  <div className="graph-legend">
-                    <span>
-                      <i className="legend-service" />
-                      Service
-                    </span>
-                    <span>
-                      <i className="legend-database" />
-                      Database
-                    </span>
-                    <span>
-                      <i className="legend-application" />
-                      Application
-                    </span>
+                  <div className="graph-header-actions">
+                    <div className="graph-legend" aria-label="Dependency graph legend">
+                      <span><i className="legend-dependency" />Dependency</span>
+                      <span><i className="legend-critical-path" />Impacted path</span>
+                    </div>
+                    {!showImpactPanel && <button type="button" className="graph-panel-toggle" onClick={() => setShowImpactPanel(true)}>Open analysis</button>}
                   </div>
+                </div>
+
+                <div className="graph-toolbar">
+                  <label className="graph-search-field">
+                    <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" aria-hidden="true"><circle cx="10.8" cy="10.8" r="6.8"/><path d="m16 16 4.5 4.5"/></svg>
+                    <input aria-label="Search graph entities" value={graphSearch} onChange={(event) => setGraphSearch(event.target.value)} placeholder="Search entities" />
+                  </label>
+                  <button type="button" className="graph-fit-button" onClick={() => reactFlowInstance?.fitView({ padding: 0.2, duration: 350 })}>Fit graph</button>
                 </div>
 
                 <div
                   className="graph-container"
-                  style={{
-                    width: "100%",
-                    height: "620px",
-                    minHeight: "620px",
-                  }}
                 >
                   {loading && (
                     <div className="overlay">
@@ -3169,10 +3477,20 @@ function App() {
                     </div>
                   )}
 
+                  {!loading && !error && graphWarnings.map((warning) => (
+                    <div className="graph-data-warning" role="status" key={warning}>
+                      {warning}
+                    </div>
+                  ))}
+
                   {!loading && !error && graph && (
                     <ReactFlow
-                      nodes={nodes}
-                      edges={edges}
+                      nodes={visibleNodes}
+                      edges={visibleEdges}
+                        nodeTypes={graphNodeTypes}
+                        edgeTypes={graphEdgeTypes}
+                      nodesDraggable
+                      onlyRenderVisibleElements
                       fitView
                       fitViewOptions={{
                         padding: 0.25,
@@ -3181,6 +3499,7 @@ function App() {
                       }}
                       onInit={(instance) => {
                         setReactFlowInstance(instance);
+                        setRelationshipLabelsVisible(instance.getZoom() >= 0.8);
                         requestAnimationFrame(() => {
                           instance.fitView({
                             padding: 0.25,
@@ -3190,23 +3509,31 @@ function App() {
                           });
                         });
                       }}
+                      onMove={(_event, viewport) => {
+                        const shouldShowLabels = viewport.zoom >= 0.8;
+                        setRelationshipLabelsVisible((visible) => visible === shouldShowLabels ? visible : shouldShowLabels);
+                      }}
                       onNodeClick={handleNodeClick}
+                      onNodesChange={handleGraphNodesChange}
+                      onEdgeMouseEnter={(_event, edge) => setHoveredGraphEdgeId(edge.id)}
+                      onEdgeMouseLeave={() => setHoveredGraphEdgeId(null)}
+                      onPaneClick={() => { setSelectedEntity(null); setImpact(null); setImpactError(""); setFocusedEntityId(null); }}
                       style={{
                         width: "100%",
                         height: "100%",
                       }}
-                      proOptions={{ hideAttribution: true }}
                     >
-                      <Background gap={24} size={1} />
+                      <Background gap={28} size={1} color="#243249" />
                       <Controls />
-                      <GraphMiniOverview nodes={nodes} edges={edges} />
+                      <MiniMap pannable zoomable />
                     </ReactFlow>
                   )}
+                  {!loading && !error && graph && visibleNodes.length === 0 && <div className="graph-search-empty">No entities match your search.</div>}
                 </div>
               </section>
 
-              <aside className="impact-panel">
-                <div className="panel-header">IMPACT ANALYSIS</div>
+              {showImpactPanel && <aside className="impact-panel">
+                <div className="analysis-panel-heading"><div><span className="page-eyebrow">BLAST RADIUS</span><h2>Impact analysis</h2></div><button type="button" aria-label="Close impact analysis" onClick={() => setShowImpactPanel(false)}>×</button></div>
 
                 {!selectedEntity && (
                   <div className="empty-panel">
@@ -3226,6 +3553,7 @@ function App() {
                         {selectedEntity.entityType}
                       </span>
                       <h2>{selectedEntity.name}</h2>
+                      <span className={`selected-entity-risk risk-${selectedEntity.criticality.toLowerCase()}`}>{selectedEntity.criticality} criticality</span>
                       <p>
                         {selectedEntity.description ||
                           "No description available."}
@@ -3245,6 +3573,11 @@ function App() {
 
                     {impact && !impactLoading && (
                       <div className="impact-results">
+                        {impact.warnings?.map((warning) => (
+                          <div className="graph-data-warning impact-data-warning" role="status" key={warning}>
+                            {warning}
+                          </div>
+                        ))}
                         <div className="impact-overview">
                           <div className="impact-metric">
                             <strong>{impact.totalAffected}</strong>
@@ -3295,12 +3628,14 @@ function App() {
                                 handleAffectedEntityClick(entity.id)
                               }
                             >
+                              <div className="affected-relationship-types">
+                                {(entity.relationshipTypes ?? []).map((type) => (
+                                  <span key={type}>{type}</span>
+                                ))}
+                              </div>
                               <div className="affected-main">
                                 <strong>{entity.name}</strong>
                                 <span>{entity.entityType}</span>
-                              </div>
-                              <div className="depth-badge">
-                                Depth {entity.depth}
                               </div>
                             </button>
                           ))}
@@ -3309,15 +3644,31 @@ function App() {
                     )}
                   </>
                 )}
-              </aside>
+              </aside>}
             </section>
-          </>
+            <section className="intelligence-layers" aria-label="Organization intelligence layers">
+              <article className="intelligence-layer-card">
+                <div className="intelligence-layer-heading"><span className="layer-icon code-layer-icon">&lt;/&gt;</span><div><h3>Code layer</h3><p>Repository and deployment data</p></div></div>
+                <div className="layer-metrics"><div><span>Repositories</span><strong className="unavailable-value">Not connected</strong></div><div><span>Deployments</span><strong className="unavailable-value">Unavailable</strong></div><div><span>Drift</span><strong className="unavailable-value">Unavailable</strong></div></div>
+              </article>
+              <article className="intelligence-layer-card">
+                <div className="intelligence-layer-heading"><span className="layer-icon cloud-layer-icon">☁</span><div><h3>Infrastructure layer</h3><p>Organization graph records</p></div></div>
+                <div className="layer-metrics"><div><span>Infrastructure entities</span><strong>{loading ? "—" : infrastructureEntityCount}</strong></div><div><span>Cloud accounts</span><strong className="unavailable-value">Not connected</strong></div><div><span>Regions</span><strong className="unavailable-value">Unavailable</strong></div></div>
+              </article>
+              <article className="intelligence-layer-card">
+                <div className="intelligence-layer-heading"><span className="layer-icon business-layer-icon">◇</span><div><h3>Service layer</h3><p>Service and reliability data</p></div></div>
+                <div className="layer-metrics"><div><span>Services</span><strong>{loading ? "—" : serviceEntityCount}</strong></div><div><span>SLOs</span><strong className="unavailable-value">Not recorded</strong></div><div><span>Uptime</span><strong className="unavailable-value">No telemetry</strong></div></div>
+              </article>
+            </section>
+          </div>
         ) : activeView === "entities" ? (
           <section className="entities-page">
             <div className="page-header">
               <div>
-                <span className="page-eyebrow">ORGANIZATION</span>
-                <div className="page-heading-title"><span className="page-section-logo"><NavIcon name="entities" /></span><h2>Entities</h2></div>
+                <div className="page-heading-line">
+                  <div className="page-heading-title"><span className="page-section-logo"><NavIcon name="entities" /></span><h2>Entities</h2></div>
+                  <span className="page-eyebrow">ORGANIZATION</span>
+                </div>
                 <p className="page-header-description">
                   Manage the systems, services, databases and infrastructure
                   represented in your dependency graph.
@@ -3398,6 +3749,7 @@ function App() {
                 <table className="entity-table">
                   <thead>
                     <tr>
+                      <th className="entity-index-heading">No.</th>
                       <th>Entity</th>
                       <th>Type</th>
                       <th>Description</th>
@@ -3405,8 +3757,9 @@ function App() {
                     </tr>
                   </thead>
                   <tbody>
-                    {filteredEntities.map((entity) => (
+                    {filteredEntities.map((entity, index) => (
                       <tr key={entity.id}>
+                        <td className="entity-row-index">{String(index + 1).padStart(2, "0")}</td>
                         <td>
                           <div className="entity-name-cell">
                             <div
@@ -3471,8 +3824,10 @@ function App() {
           <section className="relationships-page">
             <div className="page-header">
               <div>
-                <span className="page-eyebrow">DEPENDENCY GRAPH</span>
-                <div className="page-heading-title"><span className="page-section-logo"><NavIcon name="relationships" /></span><h2>Relationships</h2></div>
+                <div className="page-heading-line">
+                  <div className="page-heading-title"><span className="page-section-logo"><NavIcon name="relationships" /></span><h2>Relationships</h2></div>
+                  <span className="page-eyebrow">DEPENDENCY GRAPH</span>
+                </div>
                 <p className="page-header-description">
                   Define how entities depend on, call, use, run on, or contain one another.
                 </p>
@@ -3481,7 +3836,7 @@ function App() {
               <button
                 className="primary-button"
                 onClick={openCreateRelationship}
-                disabled={(graph?.nodes.length ?? 0) < 2}
+                disabled={(graph?.nodes.length ?? 0) < 2 || relationshipTypesLoading || relationshipTypes.length === 0}
               >
                 + Add Relationship
               </button>
@@ -3497,6 +3852,68 @@ function App() {
               </div>
             </div>
 
+            <section className="relationship-type-manager" aria-label="Relationship types">
+              <div className="relationship-type-manager-heading">
+                <div>
+                  <span className="page-eyebrow">ORGANIZATION SETTINGS</span>
+                  <h3>Relationship types</h3>
+                </div>
+                <span>{relationshipTypes.length} types</span>
+              </div>
+              {relationshipTypesLoading ? (
+                <div className="relationship-type-empty">Loading relationship types...</div>
+              ) : relationshipTypes.length === 0 ? (
+                <div className="relationship-type-empty">No relationship types are available yet.</div>
+              ) : (
+                <div className="relationship-type-list">
+                  {relationshipTypes.map((type) => {
+                    const isAssigned = (graph?.edges ?? []).some(
+                      (edge) => edge.relationshipType.trim().toLocaleUpperCase() === type.name.toLocaleUpperCase(),
+                    );
+                    return (
+                      <div className="relationship-type-chip" key={type.id}>
+                        <span>{type.name}</span>
+                        {canManageRelationshipTypes && (
+                          <button
+                            type="button"
+                            className="relationship-type-delete"
+                            disabled={relationshipTypeSaving || isAssigned}
+                            title={isAssigned ? "Delete relationships using this type first" : "Delete relationship type"}
+                            aria-label={"Delete " + type.name + " relationship type"}
+                            onClick={() => confirmDeleteRelationshipType(type)}
+                          >
+                            &times;
+                          </button>
+                        )}
+                      </div>
+                    );
+                  })}
+                </div>
+              )}
+              {canManageRelationshipTypes && (
+                <form
+                  className="relationship-type-form"
+                  onSubmit={(event) => {
+                    event.preventDefault();
+                    void createRelationshipType();
+                  }}
+                >
+                  <input
+                    aria-label="New relationship type"
+                    value={relationshipTypeName}
+                    maxLength={60}
+                    disabled={relationshipTypeSaving}
+                    onChange={(event) => setRelationshipTypeName(event.target.value)}
+                    placeholder="Add a type, e.g. SYNCS_WITH"
+                  />
+                  <button type="submit" className="secondary-button" disabled={relationshipTypeSaving || !relationshipTypeName.trim()}>
+                    {relationshipTypeSaving ? "Saving..." : "Add type"}
+                  </button>
+                </form>
+              )}
+              {relationshipTypeError && <div className="relationship-type-error" role="alert">{relationshipTypeError}</div>}
+            </section>
+
             {relationshipError && !relationshipModalOpen && (
               <div className="entity-page-error">{relationshipError}</div>
             )}
@@ -3511,7 +3928,7 @@ function App() {
                 <button
                   className="primary-button"
                   onClick={openCreateRelationship}
-                  disabled={(graph?.nodes.length ?? 0) < 2}
+                  disabled={(graph?.nodes.length ?? 0) < 2 || relationshipTypesLoading || relationshipTypes.length === 0}
                 >
                   Create Relationship
                 </button>
@@ -3568,7 +3985,7 @@ function App() {
         ) : activeView === "incidents" ? (
           <section className="incidents-page">
             <div className="page-header">
-              <div><span className="page-eyebrow">OPERATIONS</span><div className="page-heading-title"><span className="page-section-logo"><NavIcon name="incidents" /></span><h2>Incidents</h2></div><p className="page-header-description">Track failures and understand their dependency blast radius.</p></div>
+              <div><div className="page-heading-line"><div className="page-heading-title"><span className="page-section-logo"><NavIcon name="incidents" /></span><h2>Incidents</h2></div><span className="page-eyebrow">OPERATIONS</span></div><p className="page-header-description">Track failures and understand their dependency blast radius.</p></div>
               <button className="primary-button" onClick={openCreateIncident} disabled={!graph?.nodes.length}>+ Create Incident</button>
             </div>
             {incidentError && !incidentModalOpen && <div className="page-error">{incidentError}</div>}
@@ -3580,13 +3997,24 @@ function App() {
               <section className="incident-detail-panel">
                 {!selectedIncident ? <div className="empty-management detail-empty"><div className="empty-management-icon">!</div><h3>Select an incident</h3><p>Choose an incident to calculate its dependency blast radius.</p></div> : <>
                   <div className="incident-detail-header"><div><span className="page-eyebrow">INCIDENT</span><h2>{selectedIncident.title}</h2><p>{selectedIncident.description || "No incident description provided."}</p></div><div className="incident-detail-actions"><button className="secondary-button" onClick={() => openEditIncident(selectedIncident)}>Edit</button><button className="table-button danger" onClick={() => void deleteIncident(selectedIncident)}>Delete</button></div></div>
-                  <div className="incident-meta-grid"><div className="incident-meta-card"><span>Severity</span><strong className={`incident-severity ${selectedIncident.severity.toLowerCase()}`}>{selectedIncident.severity}</strong></div><div className="incident-meta-card"><span>Status</span><IncidentStatusDropdown
+                  <div className="incident-meta-grid"><div className="incident-meta-card"><span>Severity</span><strong className={`incident-severity ${selectedIncident.severity.toLowerCase()}`}>{selectedIncident.severity}</strong></div><div className="incident-meta-card"><span>Status</span>{canChangeIncidentStatus(selectedIncident) ? <IncidentStatusDropdown
                         value={selectedIncident.status}
                         onChange={(status) =>
                           void updateIncidentStatus(selectedIncident, status)
                         }
-                      /></div><div className="incident-meta-card"><span>Affected Entity</span><strong>{selectedIncident.affectedEntity?.name ?? "Unknown entity"}</strong></div><div className="incident-meta-card"><span>Created</span><strong>{new Date(selectedIncident.createdAt).toLocaleDateString()}</strong></div></div>
-                  <div className="incident-blast-radius"><div className="section-heading-row"><div><span className="page-eyebrow">BLAST RADIUS</span><h3>Potentially Affected Systems</h3></div>{impact && <strong>{impact.totalAffected} affected</strong>}</div>{impactLoading ? <div className="team-loading"><div className="small-loader" /> Calculating dependency blast radius...</div> : impactError ? <div className="page-error">{impactError}</div> : impact ? <><div className="impact-overview"><div className="impact-metric"><strong>{impact.totalAffected}</strong><span>Affected</span></div><div className="impact-metric"><strong>{impact.affectedEntities.filter((e) => e.depth === 1).length}</strong><span>Direct</span></div><div className="impact-metric"><strong>{impact.affectedEntities.length ? Math.max(...impact.affectedEntities.map((e) => e.depth)) : 0}</strong><span>Max Depth</span></div></div><div className="affected-section">{impact.totalAffected === 0 ? <div className="no-impact"><strong>No downstream impact detected</strong><p>No dependent entities were found.</p></div> : impact.affectedEntities.map((entity) => <button className="affected-item" key={entity.id} onClick={() => handleAffectedEntityClick(entity.id)}><div className="affected-main"><strong>{entity.name}</strong><span>{entity.entityType}</span></div><div className="depth-badge">Depth {entity.depth}</div></button>)}</div></> : <div className="empty-management"><p>Select the incident to calculate impact.</p></div>}</div>
+                      /> : <span className={`incident-status ${selectedIncident.status.toLowerCase()}`} title="Only the status updater, incident creator, organization owner, or an admin can change this status">{selectedIncident.status.charAt(0) + selectedIncident.status.slice(1).toLowerCase()}</span>}</div><div className="incident-meta-card"><span>Affected Entity</span><strong>{selectedIncident.affectedEntity?.name ?? "Unknown entity"}</strong></div><div className="incident-meta-card"><span>Created</span><strong>{new Date(selectedIncident.createdAt).toLocaleDateString()}</strong></div></div>
+                  <section className="incident-people-panel">
+                    <div className="section-heading-row"><div><span className="page-eyebrow">OWNERSHIP</span><h3>Incident participants</h3></div></div>
+                    <div className="incident-people-list">
+                      <div className="incident-person-row"><span>Created by</span><div><strong>{selectedIncident.createdBy?.name || "Unknown user"}</strong><small>{selectedIncident.createdBy?.email || ""}</small></div></div>
+                      {selectedIncident.investigatedBy && <div className="incident-person-row"><span>Investigating</span><div><strong>{selectedIncident.investigatedBy.name}</strong><small>{selectedIncident.investigatedBy.email}</small></div></div>}
+                      {selectedIncident.resolvedBy && <div className="incident-person-row"><span>Resolved by</span><div><strong>{selectedIncident.resolvedBy.name}</strong><small>{selectedIncident.resolvedBy.email}</small></div></div>}
+                      {selectedIncident.status === "OPEN" && !selectedIncident.investigatedBy && !selectedIncident.resolvedBy && <p className="incident-people-empty">No one has started investigating or resolved this incident. Its status remains Open.</p>}
+                      {selectedIncident.status === "INVESTIGATING" && !selectedIncident.investigatedBy && <p className="incident-people-empty">No investigator was recorded for this incident.</p>}
+                      {selectedIncident.status === "RESOLVED" && !selectedIncident.resolvedBy && <p className="incident-people-empty">No resolver was recorded for this incident.</p>}
+                    </div>
+                  </section>
+                  <div className="incident-blast-radius"><div className="section-heading-row"><div><span className="page-eyebrow">BLAST RADIUS</span><h3>Potentially Affected Systems</h3></div>{impact && <strong>{impact.totalAffected} affected</strong>}</div>{impactLoading ? <div className="team-loading"><div className="small-loader" /> Calculating dependency blast radius...</div> : impactError ? <div className="page-error">{impactError}</div> : impact ? <><div className="impact-overview"><div className="impact-metric"><strong>{impact.totalAffected}</strong><span>Affected</span></div><div className="impact-metric"><strong>{impact.affectedEntities.filter((e) => e.depth === 1).length}</strong><span>Direct</span></div><div className="impact-metric"><strong>{impact.affectedEntities.length ? Math.max(...impact.affectedEntities.map((e) => e.depth)) : 0}</strong><span>Max Depth</span></div></div><div className="affected-section">{impact.totalAffected === 0 ? <div className="no-impact"><strong>No downstream impact detected</strong><p>No dependent entities were found.</p></div> : impact.affectedEntities.map((entity) => <button className="affected-item" key={entity.id} onClick={() => handleIncidentAffectedEntityClick(entity.id)}><div className="affected-main"><strong>{entity.name}</strong><span>{entity.entityType}</span></div><div className="depth-badge">Depth {entity.depth}</div></button>)}</div></> : <div className="empty-management"><p>Select the incident to calculate impact.</p></div>}</div>
                 </>}
               </section>
             </div>
@@ -3595,8 +4023,10 @@ function App() {
           <section className="simulation-page">
             <div className="page-header">
               <div>
-                <span className="page-eyebrow">WHAT-IF ANALYSIS</span>
-                <div className="page-heading-title"><span className="page-section-logo"><NavIcon name="simulation" /></span><h2>Change Simulation</h2></div>
+                <div className="page-heading-line">
+                  <div className="page-heading-title"><span className="page-section-logo"><NavIcon name="simulation" /></span><h2>Change Simulation</h2></div>
+                  <span className="page-eyebrow">WHAT-IF ANALYSIS</span>
+                </div>
                 <p className="page-header-description">
                   Select a system to automatically simulate a change or outage and see
                   which downstream systems could be affected.
@@ -3931,8 +4361,10 @@ function App() {
           <section className="members-page">
             <div className="page-header">
               <div>
-                <span className="page-eyebrow">ORGANIZATION ACCESS</span>
-                <div className="page-heading-title"><span className="page-section-logo"><NavIcon name="members" /></span><h2>Members &amp; Roles</h2></div>
+                <div className="page-heading-line">
+                  <div className="page-heading-title"><span className="page-section-logo"><NavIcon name="members" /></span><h2>Members &amp; Roles</h2></div>
+                  <span className="page-eyebrow">ORGANIZATION ACCESS</span>
+                </div>
                 <p className="page-header-description">Manage organization membership and assign OWNER, ADMIN, or MEMBER roles.</p>
               </div>
 
@@ -4025,8 +4457,10 @@ function App() {
           <section className="teams-page">
             <div className="page-header">
               <div>
-                <span className="page-eyebrow">ORGANIZATION OPERATIONS</span>
-                <div className="page-heading-title"><span className="page-section-logo"><NavIcon name="teams" /></span><h2>Teams</h2></div>
+                <div className="page-heading-line">
+                  <div className="page-heading-title"><span className="page-section-logo"><NavIcon name="teams" /></span><h2>Teams</h2></div>
+                  <span className="page-eyebrow">ORGANIZATION OPERATIONS</span>
+                </div>
                 <p className="page-header-description">Understand team membership, leadership, and operational coverage across your organization.</p>
               </div>
 
@@ -4749,7 +5183,7 @@ function App() {
                 <span>Relationship</span>
                 <select
                   value={relationshipForm.relationshipType}
-                  disabled={relationshipSaving}
+                  disabled={relationshipSaving || relationshipTypesLoading || relationshipTypes.length === 0}
                   onChange={(event) =>
                     setRelationshipForm((current) => ({
                       ...current,
@@ -4757,9 +5191,10 @@ function App() {
                     }))
                   }
                 >
+                  {relationshipTypes.length === 0 && <option value="">No relationship types available</option>}
                   {relationshipTypes.map((type) => (
-                    <option key={type} value={type}>
-                      {type}
+                    <option key={type.id} value={type.name}>
+                      {type.name}
                     </option>
                   ))}
                 </select>
@@ -4802,7 +5237,7 @@ function App() {
               <button
                 className="primary-button"
                 onClick={() => void saveRelationship()}
-                disabled={relationshipSaving || (graph?.nodes.length ?? 0) < 2}
+                disabled={relationshipSaving || (graph?.nodes.length ?? 0) < 2 || relationshipTypesLoading || relationshipTypes.length === 0}
               >
                 {relationshipSaving ? "Creating..." : "Create Relationship"}
               </button>

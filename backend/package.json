@@ -8,7 +8,7 @@
     "build": "tsc",
     "start": "node dist/server.js",
     "typecheck": "tsc --noEmit",
-    "test": "tsx --test src/routes/entity-type.schema.test.ts",
+    "test": "tsx --test src/routes/entity-type.schema.test.ts src/routes/relationship.schema.test.ts src/middleware/error-handler.test.ts",
     "postinstall": "prisma generate"
   },
   "keywords": [],

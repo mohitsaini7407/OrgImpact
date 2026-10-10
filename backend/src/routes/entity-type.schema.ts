@@ -1,5 +1,9 @@
 import { z } from "zod";
 
+export function normalizeEntityTypeName(name: string) {
+  return name.trim().toLowerCase();
+}
+
 const colorSchema = z.string().regex(
   /^#[0-9A-Fa-f]{6}$/,
   "Color must be a six-digit hex value",

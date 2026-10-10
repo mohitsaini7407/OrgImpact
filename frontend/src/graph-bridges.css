@@ -1,0 +1,24 @@
+/* Import this file from App.tsx or merge these rules into App.css. */
+.dependency-edge-path {
+  fill: none;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+
+.dependency-edge-bridge {
+  pointer-events: none;
+}
+
+.graph-node {
+  cursor: grab;
+  user-select: none;
+  -webkit-user-select: none;
+}
+
+.graph-node:active {
+  cursor: grabbing;
+}
+
+.react-flow__node.dragging {
+  z-index: 1000 !important;
+}

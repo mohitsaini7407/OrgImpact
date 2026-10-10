@@ -10,53 +10,50 @@ export async function createIncident(
   description?: string,
   severity = "MEDIUM",
 ) {
-  const entity = await prisma.entity.findUnique({
-    where: {
-      id: affectedEntityId,
-    },
-  });
-
-  if (!entity) {
-    throw new Error("Affected entity not found");
-  }
-
+  const entity = await prisma.entity.findUnique({ where: { id: affectedEntityId } });
+  if (!entity) throw new Error("Affected entity not found");
   if (entity.organizationId !== organizationId) {
-    throw new Error(
-      "Affected entity must belong to the same organization",
-    );
+    throw new Error("Affected entity must belong to the same organization");
   }
 
-  const incident = await prisma.incident.create({
-    data: {
-      organizationId,
-      affectedEntityId,
-      createdById,
-      title,
-      description: description ?? null,
-      severity,
-    },
-    include: {
-      affectedEntity: {
-        include: {
-          entityType: true,
-        },
+  const incident = await prisma.$transaction(async (transaction) => {
+    const createdIncident = await transaction.incident.create({
+      data: {
+        organizationId,
+        affectedEntityId,
+        createdById,
+        title,
+        description: description ?? null,
+        severity,
       },
-      createdBy: {
-        select: {
-          id: true,
-          name: true,
-          email: true,
-        },
+      include: {
+        affectedEntity: { include: { entityType: true } },
+        createdBy: { select: { id: true, name: true, email: true } },
+        investigatedBy: { select: { id: true, name: true, email: true } },
+        resolvedBy: { select: { id: true, name: true, email: true } },
       },
-    },
+    });
+    const recipients = await transaction.membership.findMany({
+      where: { organizationId, userId: { not: createdById } },
+      select: { userId: true },
+    });
+    if (recipients.length > 0) {
+      await transaction.notification.createMany({
+        data: recipients.map(({ userId }) => ({
+          recipientId: userId,
+          organizationId,
+          incidentId: createdIncident.id,
+          type: "INCIDENT_CREATED",
+          title: "New incident reported",
+          message: `${createdIncident.createdBy.email} created incident - ${createdIncident.title}`,
+        })),
+      });
+    }
+    return createdIncident;
   });
 
-  await publishRealtimeEvent(
-    "INCIDENT_CREATED",
-    organizationId,
-    incident,
-  );
-
+  await publishRealtimeEvent("INCIDENT_CREATED", organizationId, incident);
+  await publishRealtimeEvent("NOTIFICATIONS_UPDATED", organizationId, { organizationId });
   return incident;
 }
 
@@ -80,6 +77,8 @@ export async function getOrganizationIncidents(
           email: true,
         },
       },
+      investigatedBy: { select: { id: true, name: true, email: true } },
+      resolvedBy: { select: { id: true, name: true, email: true } },
     },
     orderBy: {
       createdAt: "desc",
@@ -109,6 +108,8 @@ export async function getIncidentById(
           email: true,
         },
       },
+      investigatedBy: { select: { id: true, name: true, email: true } },
+      resolvedBy: { select: { id: true, name: true, email: true } },
     },
   });
 }
@@ -116,6 +117,7 @@ export async function getIncidentById(
 export async function updateIncident(
   incidentId: string,
   organizationId: string,
+  updatedById: string,
   data: {
     title?: string;
     description?: string | null;
@@ -123,67 +125,123 @@ export async function updateIncident(
     status?: string;
   },
 ) {
-  const existingIncident = await prisma.incident.findFirst({
-    where: {
-      id: incidentId,
-      organizationId,
-    },
+  const result = await prisma.$transaction(async (transaction) => {
+    const existingIncident = await transaction.incident.findFirst({
+      where: { id: incidentId, organizationId },
+    });
+    if (!existingIncident) throw new Error("Incident not found");
+
+    const membership = await transaction.membership.findUnique({
+      where: {
+        userId_organizationId: { userId: updatedById, organizationId },
+      },
+      select: { role: true },
+    });
+    if (!membership) throw new Error("Incident not found");
+
+    const isPrivileged = membership.role === "OWNER" || membership.role === "ADMIN";
+    const isStatusOnlyUpdate = Object.keys(data).length === 1 && data.status !== undefined;
+    if (!isPrivileged && !isStatusOnlyUpdate) {
+      throw new Error("You do not have permission to perform this action");
+    }
+
+    const canChangeCurrentStatus =
+      existingIncident.status === "OPEN" ||
+      existingIncident.createdById === updatedById ||
+      (existingIncident.status === "INVESTIGATING" && existingIncident.investigatedById === updatedById) ||
+      (existingIncident.status === "RESOLVED" && existingIncident.resolvedById === updatedById);
+    if (!isPrivileged && !canChangeCurrentStatus) {
+      throw new Error("You do not have permission to change this incident status");
+    }
+
+    const updateData: {
+      title?: string;
+      description?: string | null;
+      severity?: string;
+      status?: string;
+      resolvedAt?: Date | null;
+      investigatedById?: string | null;
+      resolvedById?: string | null;
+    } = { ...data };
+    const statusChanged = data.status !== undefined && data.status !== existingIncident.status;
+    if (statusChanged && data.status === "INVESTIGATING") {
+      updateData.investigatedById = updatedById;
+      updateData.resolvedById = null;
+    } else if (statusChanged && data.status === "RESOLVED") {
+      updateData.resolvedById = updatedById;
+    } else if (statusChanged && data.status === "OPEN") {
+      updateData.investigatedById = null;
+      updateData.resolvedById = null;
+    }
+    if (data.status === "RESOLVED" && existingIncident.status !== "RESOLVED") {
+      updateData.resolvedAt = new Date();
+    } else if (data.status && data.status !== "RESOLVED" && existingIncident.status === "RESOLVED") {
+      updateData.resolvedAt = null;
+    }
+
+    const include = {
+      affectedEntity: { include: { entityType: true } },
+      createdBy: { select: { id: true, name: true, email: true } },
+      investigatedBy: { select: { id: true, name: true, email: true } },
+      resolvedBy: { select: { id: true, name: true, email: true } },
+    } as const;
+    const incident = isPrivileged
+      ? await transaction.incident.update({
+          where: { id: incidentId },
+          data: updateData,
+          include,
+        })
+      : await (async () => {
+          const updateResult = await transaction.incident.updateMany({
+            where: {
+              id: incidentId,
+              organizationId,
+              status: existingIncident.status,
+              OR: [
+                { status: "OPEN" },
+                { createdById: updatedById },
+                { status: "INVESTIGATING", investigatedById: updatedById },
+                { status: "RESOLVED", resolvedById: updatedById },
+              ],
+            },
+            data: updateData,
+          });
+          if (updateResult.count !== 1) {
+            throw new Error("You do not have permission to change this incident status");
+          }
+          return transaction.incident.findFirstOrThrow({
+            where: { id: incidentId, organizationId },
+            include,
+          });
+        })();
+    if (statusChanged) {
+      const updater = await transaction.user.findUnique({ where: { id: updatedById }, select: { email: true } });
+      const statusLabel = incident.status.charAt(0) + incident.status.slice(1).toLowerCase();
+      const recipients = await transaction.membership.findMany({
+        where: { organizationId, userId: { not: updatedById } },
+        select: { userId: true },
+      });
+      if (recipients.length > 0) {
+        await transaction.notification.createMany({
+          data: recipients.map(({ userId }) => ({
+            recipientId: userId,
+            organizationId,
+            incidentId: incident.id,
+            type: "INCIDENT_STATUS_CHANGED",
+            title: "Incident status updated",
+            message: `${updater?.email ?? "A teammate"} updated status of ${incident.title} to ${statusLabel}`,
+          })),
+        });
+      }
+    }
+    return { incident, statusChanged };
   });
 
-  if (!existingIncident) {
-    throw new Error("Incident not found");
+  await publishRealtimeEvent("INCIDENT_UPDATED", organizationId, result.incident);
+  if (result.statusChanged) {
+    await publishRealtimeEvent("NOTIFICATIONS_UPDATED", organizationId, { organizationId });
   }
-
-  const updateData: {
-    title?: string;
-    description?: string | null;
-    severity?: string;
-    status?: string;
-    resolvedAt?: Date | null;
-  } = {
-    ...data,
-  };
-
-  if (data.status === "RESOLVED") {
-    updateData.resolvedAt = new Date();
-  }
-
-  if (
-    data.status &&
-    data.status !== "RESOLVED" &&
-    existingIncident.status === "RESOLVED"
-  ) {
-    updateData.resolvedAt = null;
-  }
-
-  const incident = await prisma.incident.update({
-    where: {
-      id: incidentId,
-    },
-    data: updateData,
-    include: {
-      affectedEntity: {
-        include: {
-          entityType: true,
-        },
-      },
-      createdBy: {
-        select: {
-          id: true,
-          name: true,
-          email: true,
-        },
-      },
-    },
-  });
-
-  await publishRealtimeEvent(
-    "INCIDENT_UPDATED",
-    incident.organizationId,
-    incident,
-  );
-
-  return incident;
+  return result.incident;
 }
 
 export async function deleteIncident(
@@ -251,6 +309,8 @@ export async function getIncidentImpact(
           email: true,
         },
       },
+      investigatedBy: { select: { id: true, name: true, email: true } },
+      resolvedBy: { select: { id: true, name: true, email: true } },
     },
   });
 
@@ -267,6 +327,7 @@ export async function getIncidentImpact(
 
   const impact = await analyzeImpact(
     incident.affectedEntityId,
+    organizationId,
   );
 
   if (!impact) {

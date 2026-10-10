@@ -82,16 +82,13 @@ router.get(
 /*
  * Update incident
  *
- * Only OWNER and ADMIN can update incidents.
+ * Incident status changes follow the status owner rule in the service.
+ * Other incident edits remain limited to OWNER and ADMIN there.
  */
 router.patch(
   "/:incidentId",
   authenticate,
   requireIncidentOrganizationMember,
-  requireRole(
-    "OWNER",
-    "ADMIN",
-  ),
   validate(updateIncidentSchema),
   asyncHandler(
     updateIncidentController,

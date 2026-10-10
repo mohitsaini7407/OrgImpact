@@ -38,6 +38,14 @@ WHERE EXISTS (
   FROM "Entity" AS entity
   WHERE entity."entityTypeId" = legacy."id"
     AND entity."organizationId" = organization."id"
+)
+-- A legacy type with no entities has no organization to infer. Preserve it
+-- for every organization, matching the former shared catalog, rather than
+-- leaving a NULL organizationId that would make the migration fail.
+OR NOT EXISTS (
+  SELECT 1
+  FROM "Entity" AS entity
+  WHERE entity."entityTypeId" = legacy."id"
 );
 
 ALTER TABLE "EntityType"

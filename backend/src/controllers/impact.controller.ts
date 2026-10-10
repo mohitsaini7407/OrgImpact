@@ -14,7 +14,13 @@ export async function analyzeImpactController(
     return;
   }
 
-  const result = await analyzeImpact(entityId);
+  const organizationId = req.organizationId;
+  if (!organizationId) {
+    res.status(403).json({ error: "Organization access is required" });
+    return;
+  }
+
+  const result = await analyzeImpact(entityId, organizationId);
 
   if (!result) {
     res.status(404).json({

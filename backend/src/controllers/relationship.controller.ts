@@ -10,11 +10,15 @@ export async function createRelationshipController(
   res: Response,
 ) {
   const {
-    organizationId,
     sourceEntityId,
     targetEntityId,
     relationshipType,
   } = req.body;
+  const organizationId = req.organizationId;
+  if (!organizationId) {
+    res.status(400).json({ error: "Organization access is required" });
+    return;
+  }
 
   const createdById = req.userId;
 

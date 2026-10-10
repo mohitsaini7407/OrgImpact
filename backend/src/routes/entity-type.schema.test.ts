@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import {
   createEntityTypeSchema,
+  normalizeEntityTypeName,
   updateEntityTypeSchema,
 } from "./entity-type.schema.js";
 
@@ -33,4 +34,9 @@ test("entity type updates require at least one valid field", () => {
   assert.equal(updateEntityTypeSchema.safeParse({}).success, false);
   assert.equal(updateEntityTypeSchema.safeParse({ color: "#ABCDEF" }).success, true);
   assert.equal(updateEntityTypeSchema.safeParse({ name: "   " }).success, false);
+});
+
+test("entity type names share a case-insensitive, trimmed uniqueness key", () => {
+  assert.equal(normalizeEntityTypeName(" Database "), normalizeEntityTypeName("database"));
+  assert.equal(normalizeEntityTypeName("DATABASE"), "database");
 });

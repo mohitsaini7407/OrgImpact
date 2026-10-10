@@ -8,23 +8,26 @@ datasource db {
 }
 
 model User {
-  id           String   @id @default(uuid())
-  name         String
-  email        String   @unique
-  passwordHash String?
+  id              String    @id @default(uuid())
+  name            String
+  email           String    @unique
+  passwordHash    String?
   emailVerifiedAt DateTime?
-  createdAt    DateTime @default(now())
-  updatedAt    DateTime @updatedAt
+  createdAt       DateTime  @default(now())
+  updatedAt       DateTime  @updatedAt
 
-  memberships             Membership[]
-  teamMemberships         TeamMember[]
-  createdRelationships    Relationship[]
-  createdIncidents        Incident[]
-  sentOrganizationInvites OrganizationInvitation[] @relation("OrganizationInvitationInvitedBy")
+  memberships              Membership[]
+  teamMemberships          TeamMember[]
+  createdRelationships     Relationship[]
+  createdIncidents         Incident[]
+  investigatingIncidents   Incident[]                @relation("IncidentInvestigatedBy")
+  resolvedIncidents        Incident[]                @relation("IncidentResolvedBy")
+  sentOrganizationInvites  OrganizationInvitation[]  @relation("OrganizationInvitationInvitedBy")
   organizationJoinRequests OrganizationJoinRequest[]
-  createdOrganizations    Organization[] @relation("OrganizationCreator")
-  conversationMemberships ConversationMember[]
+  createdOrganizations     Organization[]            @relation("OrganizationCreator")
+  conversationMemberships  ConversationMember[]
   sentMessages             Message[]
+  notifications            Notification[]
 }
 
 model Organization {
@@ -36,16 +39,18 @@ model Organization {
   createdAt   DateTime @default(now())
   updatedAt   DateTime @updatedAt
 
-  createdBy    User?       @relation("OrganizationCreator", fields: [createdById], references: [id], onDelete: SetNull)
-  memberships   Membership[]
-  teams         Team[]
-  entityTypes   EntityType[]
-  entities      Entity[]
-  relationships Relationship[]
-  incidents     Incident[]
-  invitations   OrganizationInvitation[]
-  joinRequests   OrganizationJoinRequest[]
-  conversations  Conversation[]
+  createdBy         User?                     @relation("OrganizationCreator", fields: [createdById], references: [id], onDelete: SetNull)
+  memberships       Membership[]
+  teams             Team[]
+  entityTypes       EntityType[]
+  relationshipTypes RelationshipType[]
+  entities          Entity[]
+  relationships     Relationship[]
+  incidents         Incident[]
+  invitations       OrganizationInvitation[]
+  joinRequests      OrganizationJoinRequest[]
+  conversations     Conversation[]
+  notifications     Notification[]
 
   @@index([createdById])
 }
@@ -60,7 +65,7 @@ model Team {
 
   organization Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
 
-  members TeamMember[]
+  members      TeamMember[]
   conversation Conversation?
 
   @@unique([organizationId, slug])
@@ -130,6 +135,18 @@ model Entity {
   @@index([criticality])
 }
 
+model RelationshipType {
+  id             String   @id @default(uuid())
+  organizationId String
+  name           String
+  createdAt      DateTime @default(now())
+
+  organization Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+
+  @@unique([organizationId, name])
+  @@index([organizationId])
+}
+
 model Relationship {
   id               String   @id @default(uuid())
   organizationId   String
@@ -154,10 +171,12 @@ model Relationship {
 }
 
 model Incident {
-  id               String @id @default(uuid())
+  id               String  @id @default(uuid())
   organizationId   String
   affectedEntityId String
   createdById      String
+  investigatedById String?
+  resolvedById     String?
 
   title       String
   description String?
@@ -168,15 +187,39 @@ model Incident {
   updatedAt  DateTime  @updatedAt
   resolvedAt DateTime?
 
-  organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
-  affectedEntity Entity       @relation(fields: [affectedEntityId], references: [id], onDelete: Cascade)
-  createdBy      User         @relation(fields: [createdById], references: [id], onDelete: Restrict)
+  organization   Organization   @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  affectedEntity Entity         @relation(fields: [affectedEntityId], references: [id], onDelete: Cascade)
+  createdBy      User           @relation(fields: [createdById], references: [id], onDelete: Restrict)
+  investigatedBy User?          @relation("IncidentInvestigatedBy", fields: [investigatedById], references: [id], onDelete: SetNull)
+  resolvedBy     User?          @relation("IncidentResolvedBy", fields: [resolvedById], references: [id], onDelete: SetNull)
   conversation   Conversation?
+  notifications  Notification[]
 
   @@index([organizationId])
   @@index([affectedEntityId])
+  @@index([investigatedById])
+  @@index([resolvedById])
   @@index([status])
   @@index([severity])
+}
+
+model Notification {
+  id             String    @id @default(uuid())
+  recipientId    String
+  organizationId String
+  incidentId     String?
+  type           String
+  title          String
+  message        String
+  createdAt      DateTime  @default(now())
+  readAt         DateTime?
+
+  recipient    User         @relation(fields: [recipientId], references: [id], onDelete: Cascade)
+  organization Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  incident     Incident?    @relation(fields: [incidentId], references: [id], onDelete: Cascade)
+
+  @@index([recipientId, organizationId, createdAt])
+  @@index([recipientId, readAt])
 }
 
 model OrganizationInvitation {
@@ -198,31 +241,30 @@ model OrganizationInvitation {
   @@index([expiresAt])
 }
 
-
 model EmailVerificationOTP {
-  id               String   @id @default(uuid())
-  email            String   @unique
-  name             String
-  passwordHash     String
-  codeHash         String
-  expiresAt        DateTime
+  id                String   @id @default(uuid())
+  email             String   @unique
+  name              String
+  passwordHash      String
+  codeHash          String
+  expiresAt         DateTime
   resendAvailableAt DateTime
-  attempts         Int      @default(0)
-  createdAt        DateTime @default(now())
-  updatedAt        DateTime @updatedAt
+  attempts          Int      @default(0)
+  createdAt         DateTime @default(now())
+  updatedAt         DateTime @updatedAt
 
   @@index([expiresAt])
 }
 
 model OrganizationJoinRequest {
-  id             String   @id @default(uuid())
+  id             String    @id @default(uuid())
   organizationId String
   userId         String
-  status         String   @default("PENDING")
+  status         String    @default("PENDING")
   reviewedById   String?
   reviewedAt     DateTime?
-  createdAt      DateTime @default(now())
-  updatedAt      DateTime @updatedAt
+  createdAt      DateTime  @default(now())
+  updatedAt      DateTime  @updatedAt
 
   organization Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
   user         User         @relation(fields: [userId], references: [id], onDelete: Cascade)
@@ -243,9 +285,9 @@ model Conversation {
   createdAt      DateTime @default(now())
   updatedAt      DateTime @updatedAt
 
-  organization Organization       @relation(fields: [organizationId], references: [id], onDelete: Cascade)
-  team         Team?              @relation(fields: [teamId], references: [id], onDelete: Cascade)
-  incident     Incident?          @relation(fields: [incidentId], references: [id], onDelete: SetNull)
+  organization Organization         @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  team         Team?                @relation(fields: [teamId], references: [id], onDelete: Cascade)
+  incident     Incident?            @relation(fields: [incidentId], references: [id], onDelete: SetNull)
   members      ConversationMember[]
   messages     Message[]
 
@@ -269,12 +311,12 @@ model ConversationMember {
 }
 
 model Message {
-  id              String   @id @default(uuid())
+  id              String    @id @default(uuid())
   conversationId  String
   senderId        String
   content         String
   clientMessageId String?
-  createdAt       DateTime @default(now())
+  createdAt       DateTime  @default(now())
   editedAt        DateTime?
 
   conversation Conversation @relation(fields: [conversationId], references: [id], onDelete: Cascade)
