@@ -38,6 +38,11 @@ export async function loginController(req: Request, res: Response) {
     const { email, password } = req.body;
     const result = await loginUser(email, password);
 
+    if (result && "error" in result) {
+      res.status(404).json({ error: result.error });
+      return;
+    }
+
     if (!result) {
       res.status(401).json({ error: "Invalid email or password" });
       return;

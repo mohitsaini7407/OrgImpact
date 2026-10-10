@@ -51,7 +51,11 @@ export async function loginUser(
     where: { email: email.trim().toLowerCase() },
   });
 
-  if (!user || !user.passwordHash) {
+  if (!user) {
+    return { error: "No user exists" as const };
+  }
+
+  if (!user.passwordHash) {
     return null;
   }
 
