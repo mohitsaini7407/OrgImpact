@@ -3183,17 +3183,6 @@ function App() {
         </nav>
 
         <div className="header-tools">
-          <button
-            type="button"
-            className={`chat-shortcut ${activeView === "chat" ? "active" : ""}`}
-            onClick={() => { setActiveView("chat"); setProfileMenuOpen(false); }}
-            aria-label={`Chat${totalChatUnread > 0 ? `, ${totalChatUnread} unread` : ""}`}
-            title="Chat"
-          >
-            <NavIcon name="chat" />
-            {totalChatUnread > 0 && <span className="nav-chat-unread">{totalChatUnread > 9 ? "9+" : totalChatUnread}</span>}
-          </button>
-
           <div className="header-account" ref={profileMenuRef}>
           <div className="notification-control" ref={notificationControlRef}>
             <button
@@ -4666,6 +4655,24 @@ function App() {
           </section>
         )}
       </main>
+
+      <button
+        type="button"
+        className={`chat-shortcut ${activeView === "chat" ? "active" : ""}`}
+        onClick={() => { setActiveView("chat"); setProfileMenuOpen(false); }}
+        aria-label={`Messages${totalChatUnread > 0 ? `, ${totalChatUnread} unread` : ""}`}
+        aria-current={activeView === "chat" ? "page" : undefined}
+        title="Messages"
+      >
+        <span className="chat-shortcut-icon">
+          <NavIcon name="chat" />
+          {totalChatUnread > 0 && <span className="nav-chat-unread">{totalChatUnread > 9 ? "9+" : totalChatUnread}</span>}
+        </span>
+        <span className="chat-shortcut-label">Messages</span>
+        <span className="chat-shortcut-avatar" aria-hidden="true">
+          {(currentUser?.name || "U").trim().charAt(0).toUpperCase()}
+        </span>
+      </button>
 
       {entityModalOpen && (
         <div className="modal-backdrop" onMouseDown={closeEntityModal}>

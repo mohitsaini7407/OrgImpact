@@ -5085,16 +5085,22 @@ html[data-theme="light"] .approval-notification-actions button.reject {
 }
 
 html[data-theme="light"] .chat-shortcut {
-  border-color:var(--oi-border);
-  background:var(--oi-surface);
-  color:var(--oi-text-secondary);
+  border-color:#2c2e36;
+  background:#17191e;
+  color:#f1f3f5;
 }
 
 html[data-theme="light"] .chat-shortcut:hover,
 html[data-theme="light"] .chat-shortcut.active {
-  border-color:#b9c9fb;
-  background:var(--oi-selected);
-  color:var(--oi-accent-strong);
+  border-color:#41444d;
+  background:#1c1f25;
+  color:#fff;
+}
+
+html[data-theme="light"] .chat-shortcut-icon .nav-chat-unread {
+  border-color:#17191e;
+  background:#f23645;
+  color:#fff;
 }
 
 html[data-theme="light"] .notification-button {
@@ -8400,35 +8406,94 @@ html[data-theme="light"] .password-visibility-toggle:focus-visible {
 }
 
 .chat-shortcut {
-  position:relative;
-  display:inline-flex;
+  position:fixed;
+  right:20px;
+  bottom:20px;
+  z-index:40;
+  display:flex;
   align-items:center;
-  justify-content:center;
-  width:38px;
-  height:38px;
-  padding:0;
-  border:1px solid rgba(56,189,248,.2);
-  border-radius:9px;
-  background:rgba(4,15,31,.72);
-  color:#91a8c0;
-  transition:color .16s ease,background .16s ease,border-color .16s ease;
-}
-
-.chat-shortcut svg {
-  width:18px;
-  height:18px;
+  gap:12px;
+  width:302px;
+  min-height:68px;
+  padding:0 22px;
+  border:1px solid #2c2e36;
+  border-radius:999px;
+  background:#17191e;
+  color:#f1f3f5;
+  box-shadow:0 8px 24px rgba(0,0,0,.28);
+  text-align:left;
+  transition:background .16s ease,border-color .16s ease,transform .16s ease;
 }
 
 .chat-shortcut:hover,.chat-shortcut.active {
-  border-color:rgba(56,189,248,.48);
-  background:rgba(14,165,233,.14);
-  color:#55c8ff;
+  border-color:#41444d;
+  background:#1c1f25;
 }
 
-.chat-shortcut .nav-chat-unread {
+.chat-shortcut:hover {
+  transform:translateY(-2px);
+}
+
+.chat-shortcut:focus-visible {
+  outline:2px solid #93c5fd;
+  outline-offset:3px;
+}
+
+.chat-shortcut-icon {
+  position:relative;
+  display:grid;
+  place-items:center;
+  flex:0 0 28px;
+  width:28px;
+  height:28px;
+}
+
+.chat-shortcut-icon svg {
+  width:27px;
+  height:27px;
+  stroke-width:2;
+}
+
+.chat-shortcut-label {
+  flex:1;
+  font-size:16px;
+  font-weight:650;
+  letter-spacing:-.2px;
+}
+
+.chat-shortcut-avatar {
+  display:grid;
+  place-items:center;
+  flex:0 0 29px;
+  width:29px;
+  height:29px;
+  border:1px solid rgba(255,255,255,.22);
+  border-radius:50%;
+  background:linear-gradient(135deg,#5fc7d8,#75a83b);
+  color:#fff;
+  font-size:12px;
+  font-weight:750;
+}
+
+.chat-shortcut-icon .nav-chat-unread {
   position:absolute;
-  top: -5px;
   right:-5px;
+  bottom:-3px;
+  min-width:20px;
+  height:20px;
+  border:1px solid #17191e;
+  background:#f23645;
+  font-size:10px;
+}
+
+@media (max-width:600px) {
+  .chat-shortcut {
+    right:14px;
+    bottom:14px;
+    width:min(302px,calc(100vw - 28px));
+    min-height:62px;
+    padding:0 18px;
+  }
 }
 
 @media (max-width:1280px) {
