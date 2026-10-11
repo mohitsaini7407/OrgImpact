@@ -508,6 +508,9 @@ function App() {
   const [selectedChatConversation, setSelectedChatConversation] = useState<ChatConversation | null>(null);
   const [chatMessages, setChatMessages] = useState<ChatMessage[]>([]);
   const [chatMessageText, setChatMessageText] = useState("");
+  const [chatWidgetOpen, setChatWidgetOpen] = useState(false);
+  const [chatWidgetFullscreen, setChatWidgetFullscreen] = useState(false);
+  const [chatWidgetClosing, setChatWidgetClosing] = useState(false);
   const [chatConnected, setChatConnected] = useState(socket.connected);
   const [chatTypingUser, setChatTypingUser] = useState<string | null>(null);
   const [chatMobileOpen, setChatMobileOpen] = useState(false);
@@ -533,6 +536,7 @@ function App() {
   const simulationFilterRef = useRef<HTMLDivElement | null>(null);
   const chatBottomRef = useRef<HTMLDivElement | null>(null);
   const chatPendingMessageRef = useRef<{ content: string; id: string } | null>(null);
+  const chatShortcutClickTimerRef = useRef<number | null>(null);
   const [membershipModalOpen, setMembershipModalOpen] = useState(false);
   const [membershipEditOpen, setMembershipEditOpen] = useState(false);
   const [editingMembership, setEditingMembership] = useState<OrganizationMember | null>(null);
@@ -1401,6 +1405,15 @@ function App() {
     });
   }
 
+  function closeChatWidget() {
+    if (chatWidgetClosing) return;
+    if (chatWidgetFullscreen) {
+      setChatWidgetClosing(true);
+      return;
+    }
+    setChatWidgetClosing(true);
+  }
+
   useEffect(() => {
     if (activeView === "teams" && token) {
       void loadTeams();
@@ -1426,6 +1439,14 @@ function App() {
   }, [activeView, token, organizationId]);
 
   useEffect(() => {
+    if (!chatWidgetOpen || !token || activeView === "chat") return;
+    void loadChatConversations();
+    void loadOrganizationMembers();
+    void loadTeams();
+    void loadCurrentUser();
+  }, [chatWidgetOpen, activeView, token, organizationId]);
+
+  useEffect(() => {
     if (token) void loadChatConversations();
   }, [token, organizationId]);
 
@@ -1442,13 +1463,13 @@ function App() {
         ...conversation,
         lastMessage: message,
         updatedAt: message.createdAt,
-        unreadCount: activeView === "chat" && selectedChatConversation?.id === conversationId || message.senderId === currentUser?.id
+        unreadCount: ((activeView === "chat" || chatWidgetOpen) && selectedChatConversation?.id === conversationId) || message.senderId === currentUser?.id
           ? 0
           : conversation.unreadCount + 1,
       } : conversation).sort((left, right) => right.updatedAt.localeCompare(left.updatedAt)));
       if (selectedChatConversation?.id === conversationId) {
         setChatMessages((current) => current.some((item) => item.id === message.id) ? current : [...current, message]);
-        if (activeView === "chat" && message.senderId !== currentUser?.id) void markChatRead(conversationId);
+        if ((activeView === "chat" || chatWidgetOpen) && message.senderId !== currentUser?.id) void markChatRead(conversationId);
       }
     };
     const onTyping = (payload: { conversationId: string; userId: string; expiresIn: number }) => {
@@ -1475,7 +1496,23 @@ function App() {
       socket.off("chat:typing", onTyping);
       socket.off("chat:read", onRead);
     };
-  }, [token, activeView, selectedChatConversation?.id, currentUser?.id]);
+  }, [token, activeView, chatWidgetOpen, selectedChatConversation?.id, currentUser?.id]);
+
+  useEffect(() => {
+    if (!chatWidgetOpen) return;
+    const closeOnEscape = (event: KeyboardEvent) => {
+      if (event.key !== "Escape") return;
+      closeChatWidget();
+    };
+    window.addEventListener("keydown", closeOnEscape);
+    return () => window.removeEventListener("keydown", closeOnEscape);
+  }, [chatWidgetOpen, chatWidgetFullscreen, chatWidgetClosing]);
+
+  useEffect(() => () => {
+    if (chatShortcutClickTimerRef.current !== null) {
+      window.clearTimeout(chatShortcutClickTimerRef.current);
+    }
+  }, []);
 
   useEffect(() => {
     if (activeView === "incidents" && token) void loadIncidents();
@@ -3139,7 +3176,12 @@ function App() {
 
   return (
     <div className="app">
-      <header className="header">
+      <header
+        className="header"
+        onClick={() => {
+          if (chatWidgetFullscreen) closeChatWidget();
+        }}
+      >
         <button
           type="button"
           className="header-brand-button"
@@ -4373,7 +4415,9 @@ function App() {
                       </div>
                       <form className="chat-composer" onSubmit={(event) => void sendChatMessage(event)}>
                         <textarea value={chatMessageText} onChange={(event) => { setChatMessageText(event.target.value); if (socket.connected) socket.emit("chat:typing", selectedChatConversation.id); }} onKeyDown={(event) => { if (event.key === "Enter" && !event.shiftKey) { event.preventDefault(); event.currentTarget.form?.requestSubmit(); } }} placeholder={chatConnected ? "Write a message…" : "Reconnect to send a message"} maxLength={4000} disabled={!chatConnected} aria-label="Write a message" />
-                        <div className="chat-composer-footer"><span>{chatMessageText.length}/4000 · Enter to send</span><button type="submit" className="primary-button" disabled={!chatMessageText.trim() || chatSending || !chatConnected}>{chatSending ? "Sending…" : "Send"}<span aria-hidden="true">↗</span></button></div>
+                        <button type="submit" className="chat-send-button" disabled={!chatMessageText.trim() || chatSending || !chatConnected} aria-label={chatSending ? "Sending message" : "Send message"} title={chatSending ? "Sending message" : "Send message"}>
+                          <svg viewBox="0 0 24 24" aria-hidden="true"><path className="chat-send-plane-fill" d="M7 12h14L3 21l4-9Z" /><path className="chat-send-plane-outline" d="M3 3 21 12 3 21l4-9L3 3Z" /></svg>
+                        </button>
                       </form>
                     </>
                   );
@@ -4656,13 +4700,198 @@ function App() {
         )}
       </main>
 
+      {chatWidgetOpen && (
+        <section
+          className={`chat-widget-panel ${chatWidgetFullscreen ? "fullscreen" : ""} ${chatWidgetClosing ? "closing" : ""}`}
+          role="dialog"
+          aria-modal="false"
+          aria-label="Messages"
+          aria-busy={chatWidgetClosing}
+          onAnimationEnd={(event) => {
+            if (event.target !== event.currentTarget) return;
+            if (event.animationName === "chat-widget-collapse-to-pill" || event.animationName === "chat-widget-mini-close") {
+              setChatWidgetOpen(false);
+              setChatWidgetFullscreen(false);
+              setChatWidgetClosing(false);
+            }
+          }}
+        >
+          <header className="chat-widget-header">
+            <div>
+              <strong>Messages</strong>
+            </div>
+            <div className="chat-widget-actions">
+              <button
+                type="button"
+                className="chat-widget-action"
+                onClick={() => {
+                  if (chatWidgetFullscreen) closeChatWidget();
+                  else setChatWidgetFullscreen(true);
+                }}
+                disabled={chatWidgetClosing}
+                aria-label={chatWidgetFullscreen ? "Close full-screen chat" : "View messages full screen"}
+                aria-pressed={chatWidgetFullscreen}
+                title={chatWidgetFullscreen ? "Close full-screen chat" : "View full screen"}
+              >
+                {chatWidgetFullscreen ? (
+                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="M8 3v5H3M16 3v5h5M8 21v-5H3M16 21v-5h5" /></svg>
+                ) : (
+                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="M8 3H3v5M16 3h5v5M8 21H3v-5M16 21h5v-5" /></svg>
+                )}
+              </button>
+              <button type="button" className="chat-widget-close" onClick={closeChatWidget} aria-label="Close messages" disabled={chatWidgetClosing}>×</button>
+            </div>
+          </header>
+          {chatError && <div className="page-error chat-widget-error" role="alert">{chatError}</div>}
+          <div className={`chat-layout chat-widget-layout ${chatMobileOpen ? "mobile-chat-open" : ""}`}>
+            <aside className="chat-sidebar">
+              <label className="chat-search">
+                <span aria-hidden="true">⌕</span>
+                <input value={chatSearch} onChange={(event) => setChatSearch(event.target.value)} placeholder="Search messages or people" aria-label="Search messages or people" />
+              </label>
+              <section className="chat-sidebar-section">
+                <div className="chat-sidebar-heading"><h3>Messages</h3>{chatConversationsLoading && <span className="chat-small-loader" />}</div>
+                {chatVisibleConversations.length === 0 && !chatConversationsLoading
+                  ? <p className="chat-sidebar-empty">No conversations yet. Choose a member below to start messaging.</p>
+                  : chatVisibleConversations.map((conversation) => {
+                    const peer = conversation.members.find((member) => member.id !== currentUser?.id);
+                    const label = conversation.type === "TEAM" ? conversation.team?.name ?? "Team channel" : conversation.title ?? peer?.name ?? "Direct message";
+                    return (
+                      <button type="button" key={conversation.id} className={`chat-conversation-item ${selectedChatConversation?.id === conversation.id ? "active" : ""}`} onClick={() => void openChatConversation(conversation)}>
+                        <span className={`chat-avatar ${conversation.type === "TEAM" ? "team" : ""}`}>{label.slice(0, 1).toUpperCase()}</span>
+                        <span className="chat-conversation-copy">
+                          <strong>{label}</strong>
+                          <small>{conversation.lastMessage ? `${conversation.lastMessage.sender.name}: ${conversation.lastMessage.content}` : "Start the conversation"}</small>
+                        </span>
+                        {conversation.unreadCount > 0 && <span className="chat-unread-count">{conversation.unreadCount > 9 ? "9+" : conversation.unreadCount}</span>}
+                      </button>
+                    );
+                  })}
+              </section>
+              {chatVisibleTeams.length > 0 && (
+                <section className="chat-sidebar-section">
+                  <div className="chat-sidebar-heading"><h3>Team channels</h3></div>
+                  {chatVisibleTeams.filter((team) => `${team.name} ${team.slug}`.toLowerCase().includes(chatSearch.trim().toLowerCase())).map((team) => {
+                    const existing = chatConversations.find((conversation) => conversation.teamId === team.id);
+                    return (
+                      <button type="button" key={team.id} className={`chat-conversation-item ${selectedChatConversation?.id === existing?.id ? "active" : ""}`} onClick={() => existing ? void openChatConversation(existing) : void openTeamChat(team)}>
+                        <span className="chat-avatar team">#</span>
+                        <span className="chat-conversation-copy"><strong>{team.name}</strong><small>{existing?.lastMessage?.content ?? "Open team channel"}</small></span>
+                      </button>
+                    );
+                  })}
+                </section>
+              )}
+              <section className="chat-sidebar-section chat-people-section">
+                <div className="chat-sidebar-heading"><h3>Start a conversation</h3>{membersLoading && <span className="chat-small-loader" />}</div>
+                {chatVisibleMembers.length === 0 && !membersLoading
+                  ? <p className="chat-sidebar-empty">No matching members.</p>
+                  : chatVisibleMembers.map((member) => {
+                    const user = member.user!;
+                    return (
+                      <button type="button" key={member.userId} className="chat-person-item" onClick={() => void startDirectChat({ id: member.userId, name: user.name, email: user.email })}>
+                        <span className="chat-avatar">{user.name.slice(0, 1).toUpperCase()}</span>
+                        <span className="chat-conversation-copy"><strong>{user.name}</strong><small>{user.email}</small></span>
+                      </button>
+                    );
+                  })}
+              </section>
+            </aside>
+            <section className="chat-window">
+              {!selectedChatConversation ? (
+                <div className="chat-empty-state"><span className="chat-empty-icon"><NavIcon name="chat" /></span><h3>Your messages</h3><p>Choose a conversation or start messaging an organization member.</p></div>
+              ) : (() => {
+                const peer = selectedChatConversation.members.find((member) => member.id !== currentUser?.id);
+                const conversationName = selectedChatConversation.type === "TEAM" ? selectedChatConversation.team?.name ?? "Team channel" : selectedChatConversation.title ?? peer?.name ?? "Direct message";
+                const latestOwnMessageId = [...chatMessages].reverse().find((message) => message.senderId === currentUser?.id)?.id;
+                const lastReadAt = chatReadAtByConversation[selectedChatConversation.id];
+                return (
+                  <>
+                    <header className="chat-conversation-header">
+                      <button type="button" className="chat-back-button" onClick={() => setChatMobileOpen(false)} aria-label="Back to messages">←</button>
+                      <div className="chat-conversation-identity">
+                        <span className={`chat-avatar ${selectedChatConversation.type === "TEAM" ? "team" : ""}`}>{conversationName.slice(0, 1).toUpperCase()}</span>
+                        <div><strong>{conversationName}</strong><small>{selectedChatConversation.type === "TEAM" ? `${selectedChatConversation.members.length} team members` : peer?.email ?? "Direct conversation"}</small></div>
+                      </div>
+                    </header>
+                    <div className="chat-message-history">
+                      {chatHasOlder && <button type="button" className="chat-load-older" disabled={chatLoading} onClick={() => chatMessages[0] && void loadChatMessages(selectedChatConversation.id, chatMessages[0].id)}>{chatLoading ? "Loading…" : "Load older messages"}</button>}
+                      {chatLoading && chatMessages.length === 0 && <div className="chat-history-empty">Loading messages…</div>}
+                      {!chatLoading && chatMessages.length === 0 && <div className="chat-history-empty">No messages yet. Say hello to start the conversation.</div>}
+                      {chatMessages.map((message) => {
+                        const own = message.senderId === currentUser?.id;
+                        const wasRead = own && message.id === latestOwnMessageId && lastReadAt && new Date(lastReadAt) >= new Date(message.createdAt);
+                        return <div className={`chat-message-row ${own ? "own" : ""}`} key={message.id}><span className="chat-message-avatar">{message.sender.name.slice(0, 1).toUpperCase()}</span><div className="chat-message-content"><div className="chat-message-meta"><strong>{own ? "You" : message.sender.name}</strong><time dateTime={message.createdAt}>{new Date(message.createdAt).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" })}</time></div><p>{message.content}</p>{wasRead && <small className="chat-seen-label">Seen</small>}</div></div>;
+                      })}
+                      {chatTypingUser && <div className="chat-typing-indicator">{chatTypingUser} is typing<span>•••</span></div>}
+                      <div ref={chatBottomRef} />
+                    </div>
+                    <form className="chat-composer" onSubmit={(event) => void sendChatMessage(event)}>
+                      <textarea value={chatMessageText} onChange={(event) => { setChatMessageText(event.target.value); if (socket.connected) socket.emit("chat:typing", selectedChatConversation.id); }} onKeyDown={(event) => { if (event.key === "Enter" && !event.shiftKey) { event.preventDefault(); event.currentTarget.form?.requestSubmit(); } }} placeholder={chatConnected ? "Write a message…" : "Reconnect to send a message"} maxLength={4000} disabled={!chatConnected} aria-label="Write a message" />
+                      <button type="submit" className="chat-send-button" disabled={!chatMessageText.trim() || chatSending || !chatConnected} aria-label={chatSending ? "Sending message" : "Send message"} title={chatSending ? "Sending message" : "Send message"}>
+                        <svg viewBox="0 0 24 24" aria-hidden="true"><path className="chat-send-plane-fill" d="M7 12h14L3 21l4-9Z" /><path className="chat-send-plane-outline" d="M3 3 21 12 3 21l4-9L3 3Z" /></svg>
+                      </button>
+                    </form>
+                  </>
+                );
+              })()}
+            </section>
+          </div>
+          {chatWidgetFullscreen && (
+            <button
+              type="button"
+              className={`chat-widget-fullscreen-close ${chatWidgetClosing ? "closing" : ""}`}
+              onClick={closeChatWidget}
+              disabled={chatWidgetClosing}
+              aria-label="Close chat"
+            >
+              <span className="chat-widget-pill-icon">
+                <NavIcon name="chat" />
+                {totalChatUnread > 0 && <span className="nav-chat-unread">{totalChatUnread > 9 ? "9+" : totalChatUnread}</span>}
+              </span>
+              <span className="chat-widget-pill-label">Messages</span>
+              <span className="chat-widget-pill-avatar" aria-hidden="true">
+                {(currentUser?.name || "U").trim().charAt(0).toUpperCase()}
+              </span>
+              <span className="chat-widget-close-icon" aria-hidden="true">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="M18 6 6 18M6 6l12 12" /></svg>
+              </span>
+            </button>
+          )}
+        </section>
+      )}
+
       <button
         type="button"
-        className={`chat-shortcut ${activeView === "chat" ? "active" : ""}`}
-        onClick={() => { setActiveView("chat"); setProfileMenuOpen(false); }}
+        className={`chat-shortcut ${chatWidgetOpen || activeView === "chat" ? "active" : ""} ${chatWidgetFullscreen ? "fullscreen" : ""}`}
+        onClick={(event) => {
+          if (event.detail > 1) return;
+          if (chatShortcutClickTimerRef.current !== null) {
+            window.clearTimeout(chatShortcutClickTimerRef.current);
+          }
+          chatShortcutClickTimerRef.current = window.setTimeout(() => {
+            chatShortcutClickTimerRef.current = null;
+            if (chatWidgetOpen) closeChatWidget();
+            else {
+              setChatWidgetClosing(false);
+              setChatWidgetOpen(true);
+            }
+            setProfileMenuOpen(false);
+          }, 300);
+        }}
+        onDoubleClick={() => {
+          if (chatShortcutClickTimerRef.current !== null) {
+            window.clearTimeout(chatShortcutClickTimerRef.current);
+            chatShortcutClickTimerRef.current = null;
+          }
+          setChatWidgetClosing(false);
+          setChatWidgetOpen(true);
+          setChatWidgetFullscreen(true);
+          setProfileMenuOpen(false);
+        }}
         aria-label={`Messages${totalChatUnread > 0 ? `, ${totalChatUnread} unread` : ""}`}
-        aria-current={activeView === "chat" ? "page" : undefined}
-        title="Messages"
+        aria-expanded={chatWidgetOpen}
+        aria-haspopup="dialog"
       >
         <span className="chat-shortcut-icon">
           <NavIcon name="chat" />
