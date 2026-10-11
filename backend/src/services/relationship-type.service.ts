@@ -4,12 +4,17 @@ import { normalizeRelationshipTypeName } from "../routes/relationship-type.schem
 
 const duplicateTypeMessage = "A relationship type with this name already exists in this organization";
 const assignedTypeMessage = "Relationship type is assigned to relationships and cannot be deleted";
+const coreRelationshipTypes = ["DEPENDS_ON", "CALLS"];
 
 function isUniqueConstraintError(error: unknown): error is { code: "P2002" } {
   return typeof error === "object" && error !== null && "code" in error && error.code === "P2002";
 }
 
 export async function getRelationshipTypes(organizationId: string) {
+  await prisma.relationshipType.createMany({
+    data: coreRelationshipTypes.map((name) => ({ organizationId, name })),
+    skipDuplicates: true,
+  });
   return prisma.relationshipType.findMany({
     where: { organizationId },
     select: { id: true, name: true, createdAt: true },
@@ -48,6 +53,9 @@ export async function deleteRelationshipType(relationshipTypeId: string, organiz
     if (!relationshipType) throw new Error("Relationship type not found");
 
     const normalizedName = normalizeRelationshipTypeName(relationshipType.name);
+    if (coreRelationshipTypes.includes(normalizedName)) {
+      throw new Error("Default relationship types cannot be deleted");
+    }
     const lockKey = "relationship-type:" + organizationId + ":" + normalizedName;
     await transaction.$queryRawUnsafe("SELECT pg_advisory_xact_lock(hashtext($1))::text AS locked", lockKey);
 

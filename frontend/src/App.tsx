@@ -44,6 +44,19 @@ function NavIcon({ name }: { name: NavIconName }) {
 const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || "http://localhost:5000";
 const graphEdgeTypes = { dependency: DependencyEdge };
 const graphNodeTypes = { graphEntity: GraphEntityNode };
+const coreRelationshipTypeLabels: Record<string, string> = {
+  DEPENDS_ON: "Depends_On",
+  CALLS: "Calls",
+};
+
+function getRelationshipTypeLabel(name: string) {
+  const normalized = name.trim().toLocaleUpperCase();
+  return coreRelationshipTypeLabels[normalized] ?? name;
+}
+
+function isCoreRelationshipType(name: string) {
+  return Object.prototype.hasOwnProperty.call(coreRelationshipTypeLabels, name.trim().toLocaleUpperCase());
+}
 
 type GraphNode = {
   id: string;
@@ -416,6 +429,7 @@ function App() {
 
   const [selectedEntity, setSelectedEntity] =
     useState<GraphNode | null>(null);
+  const [entityDetailsEntity, setEntityDetailsEntity] = useState<GraphNode | null>(null);
   const [hoveredGraphEdgeId, setHoveredGraphEdgeId] = useState<string | null>(null);
   const [relationshipLabelsVisible, setRelationshipLabelsVisible] = useState(true);
   const [impact, setImpact] =
@@ -2268,11 +2282,14 @@ function App() {
 
   function openCreateRelationship() {
     const entities = graph?.nodes ?? [];
+    const defaultRelationshipType = relationshipTypes.find(
+      (type) => type.name.trim().toLocaleUpperCase() === "DEPENDS_ON",
+    );
 
     setRelationshipForm({
       sourceEntityId: entities[0]?.id ?? "",
       targetEntityId: entities[1]?.id ?? "",
-      relationshipType: relationshipTypes[0]?.name ?? "DEPENDS_ON",
+      relationshipType: defaultRelationshipType?.name ?? relationshipTypes[0]?.name ?? "DEPENDS_ON",
     });
     setRelationshipError("");
     setRelationshipModalOpen(true);
@@ -3743,7 +3760,8 @@ function App() {
                 )}
               </div>
             ) : (
-              <div className="entity-table-wrap">
+              <div className={`entities-content${entityDetailsEntity ? " has-selection" : ""}`}>
+                <div className="entity-table-wrap">
                 <table className="entity-table">
                   <thead>
                     <tr>
@@ -3756,13 +3774,24 @@ function App() {
                   </thead>
                   <tbody>
                     {filteredEntities.map((entity, index) => (
-                      <tr key={entity.id}>
+                      <tr
+                        key={entity.id}
+                        className={entityDetailsEntity?.id === entity.id ? "entity-row-selected" : "entity-row-clickable"}
+                        onClick={() => setEntityDetailsEntity(entity)}
+                        onKeyDown={(event) => {
+                          if (event.currentTarget === event.target && (event.key === "Enter" || event.key === " ")) {
+                            event.preventDefault();
+                            setEntityDetailsEntity(entity);
+                          }
+                        }}
+                        tabIndex={0}
+                        aria-label={`Show details for ${entity.name}`}
+                      >
                         <td className="entity-row-index">{String(index + 1).padStart(2, "0")}</td>
                         <td>
                           <div className="entity-name-cell">
                             <div>
                               <strong>{entity.name}</strong>
-                              <small>{entity.id}</small>
                             </div>
                           </div>
                         </td>
@@ -3790,13 +3819,13 @@ function App() {
                           <div className="entity-actions">
                             <button
                               className="table-button"
-                              onClick={() => openEditEntity(entity)}
+                              onClick={(event) => { event.stopPropagation(); openEditEntity(entity); }}
                             >
                               Edit
                             </button>
                             <button
                               className="table-button danger"
-                              onClick={() => void deleteEntity(entity)}
+                              onClick={(event) => { event.stopPropagation(); void deleteEntity(entity); }}
                             >
                               Delete
                             </button>
@@ -3806,6 +3835,21 @@ function App() {
                     ))}
                   </tbody>
                 </table>
+                </div>
+                {entityDetailsEntity && (
+                  <aside className="entity-selected-details" aria-label="Selected entity details">
+                    <div className="entity-selected-details-heading">
+                      <span className="page-eyebrow">ENTITY DETAILS</span>
+                      <button type="button" className="table-button" onClick={() => setEntityDetailsEntity(null)}>Close</button>
+                    </div>
+                    <h3>{entityDetailsEntity.name}</h3>
+                    <div className="entity-selected-details-type">
+                      <EntityTypeIcon type={entityDetailsEntity.entityType} size={15} />
+                      <span>{entityDetailsEntity.entityType}</span>
+                    </div>
+                    <p>{entityDetailsEntity.description || "No description available."}</p>
+                  </aside>
+                )}
               </div>
             )}
           </section>
@@ -3861,13 +3905,13 @@ function App() {
                     );
                     return (
                       <div className="relationship-type-chip" key={type.id}>
-                        <span>{type.name}</span>
+                        <span>{getRelationshipTypeLabel(type.name)}</span>
                         {canManageRelationshipTypes && (
                           <button
                             type="button"
                             className="relationship-type-delete"
-                            disabled={relationshipTypeSaving || isAssigned}
-                            title={isAssigned ? "Delete relationships using this type first" : "Delete relationship type"}
+                            disabled={relationshipTypeSaving || isAssigned || isCoreRelationshipType(type.name)}
+                            title={isCoreRelationshipType(type.name) ? "Default relationship types are always available" : isAssigned ? "Delete relationships using this type first" : "Delete relationship type"}
                             aria-label={"Delete " + type.name + " relationship type"}
                             onClick={() => confirmDeleteRelationshipType(type)}
                           >
@@ -3945,7 +3989,7 @@ function App() {
                       </div>
 
                       <div className="relationship-middle">
-                        <span>{relationship.relationshipType}</span>
+                        <span>{getRelationshipTypeLabel(relationship.relationshipType)}</span>
                         <div className="relationship-arrow">→</div>
                       </div>
 
@@ -5189,7 +5233,7 @@ function App() {
                   {relationshipTypes.length === 0 && <option value="">No relationship types available</option>}
                   {relationshipTypes.map((type) => (
                     <option key={type.id} value={type.name}>
-                      {type.name}
+                      {getRelationshipTypeLabel(type.name)}
                     </option>
                   ))}
                 </select>
