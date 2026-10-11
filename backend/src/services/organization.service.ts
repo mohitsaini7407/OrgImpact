@@ -10,6 +10,14 @@ const defaultEntityTypes = [
   { name: "Security", color: "#DC2626" },
 ];
 
+const defaultRelationshipTypes = [
+  "DEPENDS_ON",
+  "CALLS",
+  "USES",
+  "RUNS_ON",
+  "CONTAINS",
+];
+
 export async function createOrganization(
   name: string,
   slug: string,
@@ -37,6 +45,13 @@ export async function createOrganization(
     await tx.entityType.createMany({
       data: defaultEntityTypes.map((entityType) => ({
         ...entityType,
+        organizationId: organization.id,
+      })),
+    });
+
+    await tx.relationshipType.createMany({
+      data: defaultRelationshipTypes.map((name) => ({
+        name,
         organizationId: organization.id,
       })),
     });
