@@ -58,6 +58,10 @@ function isCoreRelationshipType(name: string) {
   return Object.prototype.hasOwnProperty.call(coreRelationshipTypeLabels, name.trim().toLocaleUpperCase());
 }
 
+function normalizeEntityTypeName(value: unknown): string {
+  return typeof value === "string" && value.trim() ? value : "Unknown type";
+}
+
 type GraphNode = {
   id: string;
   name: string;
@@ -1565,7 +1569,7 @@ function App() {
   const visibleEntityIds = useMemo(() => {
     const query = graphSearch.trim().toLocaleLowerCase();
     return new Set((graph?.nodes ?? []).filter((entity) =>
-      (!query || `${entity.name} ${entity.entityType} ${entity.description ?? ""}`.toLocaleLowerCase().includes(query))
+      (!query || `${entity.name ?? ""} ${normalizeEntityTypeName(entity.entityType)} ${entity.description ?? ""}`.toLocaleLowerCase().includes(query))
     ).map((entity) => entity.id));
   }, [graph, graphSearch]);
   const visibleRelationships = useMemo(
@@ -2091,10 +2095,9 @@ function App() {
   }
 
   function openEditEntity(entity: GraphNode) {
+    const entityTypeName = normalizeEntityTypeName(entity.entityType);
     const matchingType = entityTypes.find(
-      (type) =>
-        type.name.toLowerCase() ===
-        entity.entityType.toLowerCase(),
+      (type) => type.name.toLowerCase() === entityTypeName.toLowerCase(),
     );
 
     setEditingEntity(entity);
@@ -3075,8 +3078,8 @@ function App() {
 
     return entities.filter(
       (entity) =>
-        entity.name.toLowerCase().includes(query) ||
-        entity.entityType.toLowerCase().includes(query) ||
+        String(entity.name ?? "").toLowerCase().includes(query) ||
+        normalizeEntityTypeName(entity.entityType).toLowerCase().includes(query) ||
         (entity.description ?? "")
           .toLowerCase()
           .includes(query),
@@ -3595,11 +3598,11 @@ function App() {
                   <>
                     <div className="entity-summary">
                       <span className="entity-type">
-                        <EntityTypeIcon type={selectedEntity.entityType} size={14} />
-                        {selectedEntity.entityType}
+                        <EntityTypeIcon type={normalizeEntityTypeName(selectedEntity.entityType)} size={14} />
+                        {normalizeEntityTypeName(selectedEntity.entityType)}
                       </span>
                       <h2>{selectedEntity.name}</h2>
-                      <span className={`selected-entity-risk risk-${selectedEntity.criticality.toLowerCase()}`}>{selectedEntity.criticality} criticality</span>
+                      <span className={`selected-entity-risk risk-${String(selectedEntity.criticality ?? "LOW").toLowerCase()}`}>{selectedEntity.criticality ?? "LOW"} criticality</span>
                       <p>
                         {selectedEntity.description ||
                           "No description available."}
@@ -3804,7 +3807,9 @@ function App() {
                     </tr>
                   </thead>
                   <tbody>
-                    {filteredEntities.map((entity, index) => (
+                    {filteredEntities.map((entity, index) => {
+                      const entityType = normalizeEntityTypeName(entity.entityType);
+                      return (
                       <tr
                         key={entity.id}
                         className={entityDetailsEntity?.id === entity.id ? "entity-row-selected" : "entity-row-clickable"}
@@ -3828,17 +3833,17 @@ function App() {
                         </td>
                         <td>
                           <span
-                            className={`type-pill type-${entity.entityType
+                            className={`type-pill type-${entityType
                               .toLowerCase()
                               .replace(/\s+/g, "-")}`}
                             style={{
-                              backgroundColor: entityTypes.find((type) => type.name === entity.entityType)?.color,
-                              borderColor: entityTypes.find((type) => type.name === entity.entityType)?.color,
+                              backgroundColor: entityTypes.find((type) => type.name === entityType)?.color,
+                              borderColor: entityTypes.find((type) => type.name === entityType)?.color,
                               color: "#fff",
                             }}
                           >
-                            <EntityTypeIcon type={entity.entityType} size={14} />
-                            {entity.entityType}
+                            <EntityTypeIcon type={entityType} size={14} />
+                            {entityType}
                           </span>
                         </td>
                         <td>
@@ -3863,7 +3868,8 @@ function App() {
                           </div>
                         </td>
                       </tr>
-                    ))}
+                      );
+                    })}
                   </tbody>
                 </table>
                 </div>
