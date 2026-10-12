@@ -51,6 +51,16 @@ React 19 (Vite) <─── HTTP / Socket.IO ───> Express 5 API
 
 When an entity experiences an incident, OrgImpact traverses upstream dependency edges (e.g., `API -> Service -> Database`), identifying every dependent component and its depth in the failure chain.
 
+### 🔐 Role-Based Access Control (RBAC)
+
+Server-side authorization middleware (`requireRole`, `requireOrganizationMember`) strictly enforces permissions per organization tenant:
+
+| Role | Key Capabilities |
+| --- | --- |
+| **Owner / Creator** | Full organization administration, approve/reject join requests, manage member roles, create/edit/delete entities, teams, and relationships. |
+| **Admin** | Create and manage entities, entity types, relationships, teams, and incidents. |
+| **Member** | View graph and inventory, run impact analysis, log incidents, and participate in direct/team chat (read-only for entities & relationships). |
+
 ---
 
 ## 📡 API Reference
