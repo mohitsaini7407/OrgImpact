@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { chooseRelationshipLabelPosition, deriveGraphRelationshipDisplay, detectEdgeCrossings, buildDependencyPathGeometry, filterValidGraphRelationships, layoutGraphNodes, type GraphRelationship } from "./graphRelationships.ts";
+import { chooseRelationshipLabelPosition, deriveGraphRelationshipDisplay, detectEdgeCrossings, buildDependencyPathGeometry, filterValidGraphRelationships, getGraphNodeDimensions, layoutGraphNodes, type GraphRelationship } from "./graphRelationships.ts";
 
 const relationships: GraphRelationship[] = [
   { id: "payment-database", source: "payment", target: "database", relationshipType: "DEPENDS_ON" },
@@ -159,6 +159,25 @@ test("automatic layout gives every node non-overlapping dynamic bounds", () => {
   for (let index = 1; index < ordered.length; index += 1) {
     assert.ok(ordered[index].y >= ordered[index - 1].y + (ordered[index - 1].height ?? 112));
   }
+});
+
+test("long descriptions expand graph nodes while respecting the port height", () => {
+  const shortDescription = getGraphNodeDimensions("Short description");
+  const longDescription = getGraphNodeDimensions("A detailed description ".repeat(24));
+  const highDegreeNode = getGraphNodeDimensions("Short description", 12);
+
+  assert.ok(longDescription.width > shortDescription.width);
+  assert.ok(longDescription.height > shortDescription.height);
+  assert.ok(highDegreeNode.height >= 13 * 22);
+});
+
+test("layer spacing accounts for wider description-driven nodes", () => {
+  const positions = layoutGraphNodes([
+    { id: "source", name: "Source", width: 400, height: 190 },
+    { id: "target", name: "Target", width: 280, height: 170 },
+  ], [{ id: "edge", source: "source", target: "target", relationshipType: "DEPENDS_ON" }]);
+
+  assert.ok(positions.get("target")!.x >= positions.get("source")!.x + 400 + 160);
 });
 
 test("high-degree nodes receive enough height to keep incoming handles distinct", () => {

@@ -34,6 +34,17 @@ export type Point = { x: number; y: number };
 export type GraphPortSide = "left" | "right" | "top" | "bottom";
 export type GraphNodePosition = Point & { id: string; layer: number; width?: number; height?: number };
 
+export function getGraphNodeDimensions(description?: string | null, portCount = 0) {
+  const text = description?.trim() ?? "";
+  const width = Math.min(420, Math.max(280, 280 + Math.max(0, text.length - 50) * 0.8));
+  const charactersPerLine = Math.max(1, Math.floor((width - 64) / 8));
+  const descriptionLines = text ? Math.ceil(text.length / charactersPerLine) : 0;
+  const contentHeight = Math.max(170, 148 + descriptionLines * 18);
+  const portHeight = (Math.max(0, portCount) + 1) * 22;
+
+  return { width, height: Math.max(contentHeight, portHeight) };
+}
+
 const portOutward: Record<GraphPortSide, Point> = {
   left: { x: -1, y: 0 },
   right: { x: 1, y: 0 },
@@ -180,7 +191,7 @@ export function filterValidGraphRelationships(
 }
 
 export function layoutGraphNodes(
-  nodes: Array<{ id: string; name: string }>,
+  nodes: Array<{ id: string; name: string; width?: number; height?: number }>,
   relationships: GraphRelationship[],
 ) {
   const byId = new Map(nodes.map((node) => [node.id, node]));
@@ -202,8 +213,7 @@ export function layoutGraphNodes(
   });
   const nodeHeights = new Map(nodes.map((node) => {
     const ports = Math.max(incomingCounts.get(node.id) ?? 0, outgoingCounts.get(node.id) ?? 0);
-    // Give high-degree nodes enough vertical border to keep their ports apart.
-    return [node.id, Math.max(112, (ports + 1) * 22)] as const;
+    return [node.id, Math.max(node.height ?? 112, (ports + 1) * 22)] as const;
   }));
 
   // Mark DFS back-edges as feedback routes. Removing those edges produces a
@@ -319,6 +329,10 @@ export function layoutGraphNodes(
     routeGroupCounts.set(key, (routeGroupCounts.get(key) ?? 0) + 1);
   });
   const gapLoads = new Map<number, number>();
+  const layerWidths = new Map<number, number>();
+  layerGroups.forEach((group, layer) => {
+    layerWidths.set(layer, Math.max(230, ...group.map((node) => byId.get(node.id)?.width ?? 230)));
+  });
   routeGroupCounts.forEach((count, key) => {
     const sourceLayer = Number(key.split(":")[0]);
     gapLoads.set(sourceLayer, Math.max(gapLoads.get(sourceLayer) ?? 0, count));
@@ -326,7 +340,8 @@ export function layoutGraphNodes(
   const layerX = new Map<number, number>([[0, 80]]);
   for (let layer = 0; layer < maxLayer; layer += 1) {
     const edgeSlots = gapLoads.get(layer) ?? 1;
-    layerX.set(layer + 1, (layerX.get(layer) ?? 80) + Math.max(430, 230 + 160 + (edgeSlots - 1) * 24));
+    const layerWidth = layerWidths.get(layer) ?? 230;
+    layerX.set(layer + 1, (layerX.get(layer) ?? 80) + Math.max(430, layerWidth + 160 + (edgeSlots - 1) * 24));
   }
   const positions = new Map<string, GraphNodePosition>();
   layerGroups.forEach((group, layer) => {
@@ -338,7 +353,7 @@ export function layoutGraphNodes(
         layer,
         x: layerX.get(layer) ?? layer * 320 + 80,
         y: top,
-        width: 230,
+        width: byId.get(node.id)?.width ?? 230,
         height,
       });
       top += height + 100;

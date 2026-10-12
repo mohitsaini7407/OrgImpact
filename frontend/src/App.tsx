@@ -1,5 +1,5 @@
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
-import type { FormEvent } from "react";
+import type { CSSProperties, FormEvent } from "react";
 import { createPortal } from "react-dom";
 import { socket } from "./socket";
 import {
@@ -21,10 +21,11 @@ import "./graph-bridges.css";
 import Login from "./Login";
 import OrganizationOnboarding from "./OrganizationOnboarding";
 import OrgImpactLogo from "./OrgImpactLogo";
-import { deriveGraphRelationshipDisplay, filterValidGraphRelationships, layoutGraphNodes } from "./graphRelationships";
+import { deriveGraphRelationshipDisplay, filterValidGraphRelationships, getGraphNodeDimensions, layoutGraphNodes } from "./graphRelationships";
 import DependencyEdge from "./DependencyEdge";
 import GraphEntityNode from "./GraphEntityNode";
 import EntityTypeIcon from "./EntityTypeIcon";
+import GraphEntityShape from "./GraphEntityShape";
 
 
 type NavIconName = "dashboard" | "entities" | "relationships" | "teams" | "members" | "incidents" | "simulation" | "chat";
@@ -60,6 +61,27 @@ function isCoreRelationshipType(name: string) {
 
 function normalizeEntityTypeName(value: unknown): string {
   return typeof value === "string" && value.trim() ? value : "Unknown type";
+}
+
+function EntityTypeBadge({ type, color, iconSize = 14, className = "" }: {
+  type: string;
+  color?: string;
+  iconSize?: number;
+  className?: string;
+}) {
+  const normalizedType = normalizeEntityTypeName(type);
+  return (
+    <span
+      className={`type-pill type-${normalizedType.toLowerCase().replace(/\s+/g, "-")} ${className}`.trim()}
+      style={{
+        ...(color ? { backgroundColor: color, borderColor: color } : {}),
+        color: "#fff",
+      }}
+    >
+      <EntityTypeIcon type={normalizedType} size={iconSize} />
+      {normalizedType}
+    </span>
+  );
 }
 
 type GraphNode = {
@@ -417,6 +439,7 @@ function App() {
 
   const [graph, setGraph] = useState<GraphResponse | null>(null);
   const graphRequestId = useRef(0);
+  const graphLoadedRef = useRef(false);
   const [entityTypes, setEntityTypes] = useState<EntityType[]>([]);
   const [entityTypesError, setEntityTypesError] = useState("");
   const [entityTypesModalOpen, setEntityTypesModalOpen] = useState(false);
@@ -435,6 +458,8 @@ function App() {
     useState<GraphNode | null>(null);
   const [entityDetailsEntity, setEntityDetailsEntity] = useState<GraphNode | null>(null);
   const [hoveredGraphEdgeId, setHoveredGraphEdgeId] = useState<string | null>(null);
+  const [selectedRelationshipId, setSelectedRelationshipId] = useState<string | null>(null);
+  const [pendingGraphRelationshipId, setPendingGraphRelationshipId] = useState<string | null>(null);
   const [relationshipLabelsVisible, setRelationshipLabelsVisible] = useState(true);
   const [impact, setImpact] =
     useState<ImpactResponse | null>(null);
@@ -614,6 +639,7 @@ function App() {
     localStorage.removeItem("token");
     setToken(null);
     setShowOnboarding(false);
+    graphLoadedRef.current = false;
     setGraph(null);
     return true;
   }
@@ -624,6 +650,7 @@ function App() {
     const requestId = ++graphRequestId.current;
 
     if (!currentToken || !organizationId) {
+      graphLoadedRef.current = false;
       setGraph(null);
       setError("");
       setLoading(false);
@@ -631,7 +658,7 @@ function App() {
     }
 
     try {
-      setLoading(true);
+      if (!graphLoadedRef.current) setLoading(true);
       setError("");
 
       const response = await fetch(
@@ -662,6 +689,7 @@ function App() {
       const validNodeIds = new Set(data.nodes.map((node) => node.id));
       setManualGraphPositions((current) => new Map([...current].filter(([id]) => validNodeIds.has(id))));
       setGraphNodeMeasurements((current) => new Map([...current].filter(([id]) => validNodeIds.has(id))));
+      graphLoadedRef.current = true;
       setGraph(data);
     } catch (err) {
       if (requestId === graphRequestId.current) {
@@ -675,6 +703,7 @@ function App() {
 
   useEffect(() => {
     graphRequestId.current += 1;
+    graphLoadedRef.current = false;
     setGraph(null);
     setManualGraphPositions(new Map());
     setSelectedEntity(null);
@@ -700,6 +729,7 @@ function App() {
     socket.on("RELATIONSHIP_TYPE_DELETED", handleRelationshipTypeChanged);
 
     const handleEntityCreated = () => {
+      setGraphSearch("");
       void loadGraph();
     };
 
@@ -1554,12 +1584,24 @@ function App() {
     () => filterValidGraphRelationships(graph?.nodes ?? [], graph?.edges ?? []),
     [graph],
   );
+  const selectedRelationship = validatedRelationships.edges.find((edge) => edge.id === selectedRelationshipId) ?? null;
+  const selectedRelationshipEndpoints = useMemo(
+    () => new Set(selectedRelationship ? [selectedRelationship.source, selectedRelationship.target] : []),
+    [selectedRelationship],
+  );
   const graphWarnings = useMemo(
     () => [...(graph?.warnings ?? []), ...validatedRelationships.warnings],
     [graph?.warnings, validatedRelationships],
   );
   const automaticNodePositions = useMemo(
-    () => layoutGraphNodes(graph?.nodes ?? [], validatedRelationships.edges),
+    () => layoutGraphNodes(
+      (graph?.nodes ?? []).map((entity) => ({
+        id: entity.id,
+        name: entity.name,
+        ...getGraphNodeDimensions(entity.description),
+      })),
+      validatedRelationships.edges,
+    ),
     [graph, validatedRelationships],
   );
   const nodePositions = useMemo(
@@ -1608,10 +1650,12 @@ function App() {
     const orderedNodes = [...graph.nodes].sort((left, right) => left.name.localeCompare(right.name));
 
     return orderedNodes.map((entity) => {
-      const position = nodePositions.get(entity.id) ?? { x: 80, y: 80, width: 230, height: 112 };
+      const defaultDimensions = getGraphNodeDimensions(entity.description);
+      const position = nodePositions.get(entity.id) ?? { x: 80, y: 80, ...defaultDimensions };
+      const width = position.width ?? defaultDimensions.width;
+      const height = position.height ?? defaultDimensions.height;
       const measured = graphNodeMeasurements.get(entity.id);
-      const width = position.width ?? 230;
-      const height = position.height ?? 112;
+      const currentMeasurement = measured?.width === width && measured.height === height ? measured : undefined;
       const entityType = entity.entityType || "Unknown type";
       const criticality = entity.criticality || "LOW";
       const ports = graphPortsByEntity.get(entity.id) ?? { sourceHandles: [], targetHandles: [] };
@@ -1619,25 +1663,19 @@ function App() {
       const isSelected = selectedEntity?.id === entity.id;
       const isAffected = incomingSourceIds.has(entity.id);
       const isFocused = focusedEntityId === entity.id;
+      const isRelationshipEndpoint = selectedRelationshipEndpoints.has(entity.id);
 
       const type = entityType.toUpperCase();
-      let typeClass = "graph-node-default";
-
-      if (type === "SERVICE") {
-        typeClass = "graph-node-service";
-      } else if (type === "DATABASE") {
-        typeClass = "graph-node-database";
-      } else if (type === "APPLICATION") {
-        typeClass = "graph-node-application";
-      } else if (type === "INFRASTRUCTURE") {
-        typeClass = "graph-node-infrastructure";
-      }
+      const shapeType = ["DATABASE", "APPLICATION", "INFRASTRUCTURE", "NETWORK", "SECURITY", "SERVICE"].includes(type)
+        ? type.toLowerCase()
+        : "default";
+      const typeColor = entity.entityTypeColor ?? "#64748b";
 
       return {
         id: entity.id,
         type: "graphEntity",
         position: { x: position.x, y: position.y },
-        ...(measured ? { measured } : {}),
+        ...(currentMeasurement ? { measured: currentMeasurement } : {}),
         sourcePosition: Position.Right,
         targetPosition: Position.Left,
         data: {
@@ -1649,39 +1687,35 @@ function App() {
             <div
               className={[
                 "graph-node",
-                typeClass,
+                "graph-node-type-card",
                 isSelected ? "is-selected" : "",
                 isAffected ? "is-affected" : "",
                 isFocused ? "is-focused" : "",
+                isRelationshipEndpoint ? "is-relationship-endpoint" : "",
               ].join(" ")}
-              style={{ height, ...(entity.entityTypeColor ? { borderLeftColor: entity.entityTypeColor } : {}) }}
+              style={{ height, "--entity-type-color": typeColor } as CSSProperties}
             >
-              <div
-                className="node-icon"
-                style={entity.entityTypeColor ? {
-                  backgroundColor: entity.entityTypeColor,
-                  borderColor: entity.entityTypeColor,
-                } : undefined}
-              ><EntityTypeIcon type={type} /></div>
-
-              <div className="node-content">
-                <div className="node-type">
-                  {entityType}
+              <GraphEntityShape type={shapeType} className="graph-node-shape" />
+              <span className={`node-risk-indicator risk-${String(criticality).toLowerCase()}`}>
+                {criticality}
+              </span>
+              <div className="node-main">
+                <div className="node-icon">
+                  <EntityTypeIcon type={type} />
                 </div>
-
-                <div className="node-name">
-                  {entity.name}
-                </div>
-
-                {entity.description && (
-                  <div className="node-description">
-                    {entity.description}
+                <div className="node-content">
+                  <div className="node-name">
+                    {entity.name}
                   </div>
-                )}
-                <span className={`node-risk-indicator risk-${String(criticality).toLowerCase()}`}>
-                  {criticality}
-                </span>
+                  <div className="node-type">{entityType}</div>
+                </div>
               </div>
+
+              {entity.description && (
+                <div className="node-description">
+                  {entity.description}
+                </div>
+              )}
             </div>
           ),
         },
@@ -1696,7 +1730,7 @@ function App() {
         className: entity.entityTypeColor ? "has-custom-type-color" : undefined,
       };
     });
-  }, [graph, nodePositions, graphNodeMeasurements, graphPortsByEntity, selectedEntity, incomingSourceIds, focusedEntityId]);
+  }, [graph, nodePositions, graphNodeMeasurements, graphPortsByEntity, selectedEntity, incomingSourceIds, focusedEntityId, selectedRelationshipEndpoints]);
 
   const edges: Edge[] = useMemo(() => {
     if (!graph) {
@@ -1705,8 +1739,16 @@ function App() {
 
     const edgeOrder = [...relationshipDisplay.visualEdges].sort((left, right) => left.id.localeCompare(right.id));
     const zIndexById = new Map(edgeOrder.map((edge, index) => [edge.id, 1 + index / (edgeOrder.length + 1)]));
+    const hasGraphFocus = Boolean(selectedRelationshipId || (selectedEntity && focusedEntityId === selectedEntity.id));
     return relationshipDisplay.visualEdges.map((relationship) => {
       const highlighted = relationship.isIncoming;
+      const isSelectedRelationship = relationship.relationshipIds.includes(selectedRelationshipId ?? "");
+      const isConnectedToFocusedEntity = Boolean(
+        selectedEntity &&
+        focusedEntityId === selectedEntity.id &&
+        (relationship.source === selectedEntity.id || relationship.target === selectedEntity.id),
+      );
+      const isGraphFocusEdge = isSelectedRelationship || isConnectedToFocusedEntity;
       const isParallel = relationship.parallelCount > 1;
 
       return {
@@ -1726,32 +1768,35 @@ function App() {
           forwardRelationshipTypes: relationship.forwardRelationshipTypes,
           reverseRelationshipTypes: relationship.reverseRelationshipTypes,
           bidirectional: relationship.bidirectional,
-          showLabel: (relationshipDisplay.visualEdges.length <= 12 && relationshipLabelsVisible) || hoveredGraphEdgeId === relationship.id,
+          showLabel: (relationshipDisplay.visualEdges.length <= 12 && relationshipLabelsVisible) || hoveredGraphEdgeId === relationship.id || isGraphFocusEdge,
         },
         animated: highlighted,
+        selected: isGraphFocusEdge,
         ...(relationship.bidirectional ? {
           markerStart: {
             type: MarkerType.ArrowClosed,
             width: 18,
             height: 18,
-            color: relationship.sourceArrowIncoming ? "#fb923c" : "#6d94c7",
+            color: isGraphFocusEdge ? "#facc15" : relationship.sourceArrowIncoming ? "#fb923c" : "#6d94c7",
           },
         } : {}),
         markerEnd: {
           type: MarkerType.ArrowClosed,
           width: 18,
           height: 18,
-          color: relationship.targetArrowIncoming ? "#fb923c" : "#6d94c7",
+          color: isGraphFocusEdge ? "#facc15" : relationship.targetArrowIncoming ? "#fb923c" : "#6d94c7",
         },
         style: {
-          stroke: highlighted ? "#fb923c" : "#6d94c7",
-          strokeWidth: highlighted ? 2.8 : 2,
+          stroke: isGraphFocusEdge ? "#facc15" : highlighted ? "#fb923c" : "#6d94c7",
+          strokeWidth: isGraphFocusEdge ? 4 : highlighted ? 2.8 : 2,
           strokeDasharray: isParallel && relationship.parallelIndex % 2 === 1 ? "6 4" : undefined,
+          opacity: hasGraphFocus ? (isGraphFocusEdge ? 1 : 0.2) : 1,
+          filter: isGraphFocusEdge ? "drop-shadow(0 0 5px rgba(250,204,21,.95))" : undefined,
         },
-        zIndex: zIndexById.get(relationship.id) ?? 1,
+        zIndex: isGraphFocusEdge ? edgeOrder.length + 2 : zIndexById.get(relationship.id) ?? 1,
       };
     });
-  }, [graph, relationshipDisplay, hoveredGraphEdgeId, relationshipLabelsVisible]);
+  }, [graph, relationshipDisplay, hoveredGraphEdgeId, relationshipLabelsVisible, selectedRelationshipId, selectedEntity, focusedEntityId]);
 
   const visibleNodes = useMemo(
     () => nodes.filter((node) => visibleEntityIds.has(node.id)),
@@ -1764,6 +1809,7 @@ function App() {
     ),
     [edges, visibleEntityIds],
   );
+
   const currentOrganizationName = currentUser?.memberships?.find(
     (membership) => membership.organizationId === organizationId,
   )?.organization?.name ?? "Organization";
@@ -1833,39 +1879,33 @@ function App() {
     });
   }
 
-  function handleAffectedEntityClick(entityId: string) {
+  function navigateToGraphEntity(entityId: string) {
     const entity = graph?.nodes.find(
       (item) => item.id === entityId,
     );
 
-    if (!entity) {
-      return;
-    }
-
-    setSelectedEntity(entity);
-    setImpact(null);
-    setImpactError("");
-    setFocusedEntityId(entityId);
-
-    void analyzeImpact(entityId);
-
-    requestAnimationFrame(() => {
-      focusEntity(entityId);
-    });
-  }
-
-  function handleIncidentAffectedEntityClick(entityId: string) {
-    const entity = graph?.nodes.find((item) => item.id === entityId);
     if (!entity) return;
 
     setSelectedEntity(entity);
+    setSelectedRelationshipId(null);
     setImpact(null);
     setImpactError("");
     setFocusedEntityId(entityId);
     setGraphSearch("");
+    setSelectedRelationshipId(null);
+    setPendingGraphRelationshipId(null);
     setPendingGraphFocusId(entityId);
+    setShowImpactPanel(true);
     setActiveView("dashboard");
     void analyzeImpact(entityId);
+  }
+
+  function handleAffectedEntityClick(entityId: string) {
+    navigateToGraphEntity(entityId);
+  }
+
+  function handleIncidentAffectedEntityClick(entityId: string) {
+    navigateToGraphEntity(entityId);
   }
 
   useEffect(() => {
@@ -1887,6 +1927,41 @@ function App() {
     return () => cancelAnimationFrame(frame);
   }, [activeView, pendingGraphFocusId, reactFlowInstance, nodes]);
 
+  useEffect(() => {
+    if (activeView !== "dashboard" || !pendingGraphRelationshipId || !reactFlowInstance) return;
+    const relationship = validatedRelationships.edges.find((edge) => edge.id === pendingGraphRelationshipId);
+    if (!relationship) return;
+
+    const endpointNodes = nodes.filter((node) => node.id === relationship.source || node.id === relationship.target);
+    if (!endpointNodes.length) return;
+
+    const frame = requestAnimationFrame(() => {
+      reactFlowInstance.fitView({
+        nodes: endpointNodes,
+        padding: 0.3,
+        duration: 600,
+        minZoom: 0.75,
+        maxZoom: 1.5,
+      });
+      setSelectedRelationshipId(pendingGraphRelationshipId);
+      setPendingGraphRelationshipId(null);
+    });
+    return () => cancelAnimationFrame(frame);
+  }, [activeView, pendingGraphRelationshipId, reactFlowInstance, validatedRelationships, nodes]);
+
+  function handleRelationshipClick(relationshipId: string) {
+    setGraphSearch("");
+    setSelectedEntity(null);
+    setSelectedRelationshipId(relationshipId);
+    setPendingGraphFocusId(null);
+    setShowImpactPanel(true);
+    setImpact(null);
+    setImpactError("");
+    setFocusedEntityId(null);
+    setPendingGraphRelationshipId(relationshipId);
+    setActiveView("dashboard");
+  }
+
   const handleNodeClick: NodeMouseHandler = (_event, node) => {
     const entity = graph?.nodes.find(
       (item) => item.id === node.id,
@@ -1897,6 +1972,7 @@ function App() {
     }
 
     setSelectedEntity(entity);
+    setSelectedRelationshipId(null);
     setImpact(null);
     setImpactError("");
     setFocusedEntityId(entity.id);
@@ -1932,6 +2008,7 @@ function App() {
         });
         return next;
       });
+
     }
   };
 
@@ -2182,10 +2259,20 @@ function App() {
         );
       }
 
+      const createdEntityId = !editingEntity && typeof data?.id === "string" ? data.id : null;
+      if (!editingEntity && !createdEntityId) {
+        throw new Error("Entity was created, but the response did not include its ID.");
+      }
+
       closeEntityModal();
       setSelectedEntity(null);
       setImpact(null);
       setFocusedEntityId(null);
+      setGraphSearch("");
+      if (createdEntityId) {
+        setPendingGraphFocusId(createdEntityId);
+        setActiveView("dashboard");
+      }
       await loadGraph();
       setConfirmDialog(null);
     } catch (err) {
@@ -2401,6 +2488,7 @@ function App() {
       setRelationshipForm(emptyRelationshipForm);
       setRelationshipError("");
       setConfirmDialog(null);
+      setGraphSearch("");
       await loadGraph();
     } catch (err) {
       console.error(err);
@@ -2562,7 +2650,7 @@ function App() {
     setSelectedIncident(incident);
     const entity = graph?.nodes.find((item) => item.id === incident.affectedEntityId);
     if (!entity) { setIncidentError("The affected entity is not currently available in the graph."); return; }
-    setIncidentError(""); setSelectedEntity(entity); setImpact(null); setImpactError(""); setFocusedEntityId(entity.id); void analyzeImpact(entity.id);
+    setIncidentError(""); setSelectedEntity(entity); setSelectedRelationshipId(null); setImpact(null); setImpactError(""); setFocusedEntityId(entity.id); void analyzeImpact(entity.id);
     requestAnimationFrame(() => focusEntity(entity.id));
   }
 
@@ -3565,7 +3653,7 @@ function App() {
                       onNodesChange={handleGraphNodesChange}
                       onEdgeMouseEnter={(_event, edge) => setHoveredGraphEdgeId(edge.id)}
                       onEdgeMouseLeave={() => setHoveredGraphEdgeId(null)}
-                      onPaneClick={() => { setSelectedEntity(null); setImpact(null); setImpactError(""); setFocusedEntityId(null); }}
+                      onPaneClick={() => { setSelectedEntity(null); setSelectedRelationshipId(null); setImpact(null); setImpactError(""); setFocusedEntityId(null); }}
                       style={{
                         width: "100%",
                         height: "100%",
@@ -3583,7 +3671,7 @@ function App() {
               {showImpactPanel && <aside className="impact-panel">
                 <div className="analysis-panel-heading"><div><span className="page-eyebrow">BLAST RADIUS</span><h2>Impact analysis</h2></div><button type="button" aria-label="Close impact analysis" onClick={() => setShowImpactPanel(false)}>×</button></div>
 
-                {!selectedEntity && (
+                {!selectedEntity && !selectedRelationship && (
                   <div className="empty-panel">
                     <div className="empty-icon">↗</div>
                     <h3>Select an entity</h3>
@@ -3594,9 +3682,23 @@ function App() {
                   </div>
                 )}
 
+                {selectedRelationship && (
+                  <section className="selected-relationship-summary" aria-label="Selected graph relationship">
+                    <span className="page-eyebrow">SELECTED RELATIONSHIP</span>
+                    <strong className="selected-relationship-type">{getRelationshipTypeLabel(selectedRelationship.relationshipType)}</strong>
+                    <div className="selected-relationship-route">
+                      <span>{graph?.nodes.find((node) => node.id === selectedRelationship.source)?.name ?? "Unknown entity"}</span>
+                      <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 12h14m-6-6 6 6-6 6" /></svg>
+                      <span>{graph?.nodes.find((node) => node.id === selectedRelationship.target)?.name ?? "Unknown entity"}</span>
+                    </div>
+                    <p>The highlighted connection is shown in the graph.</p>
+                  </section>
+                )}
+
                 {selectedEntity && (
                   <>
                     <div className="entity-summary">
+                      <span className="page-eyebrow">SELECTED IN GRAPH</span>
                       <span className="entity-type">
                         <EntityTypeIcon type={normalizeEntityTypeName(selectedEntity.entityType)} size={14} />
                         {normalizeEntityTypeName(selectedEntity.entityType)}
@@ -3809,6 +3911,7 @@ function App() {
                   <tbody>
                     {filteredEntities.map((entity, index) => {
                       const entityType = normalizeEntityTypeName(entity.entityType);
+                      const entityTypeColor = entityTypes.find((type) => type.name === entityType)?.color;
                       return (
                       <tr
                         key={entity.id}
@@ -3832,19 +3935,7 @@ function App() {
                           </div>
                         </td>
                         <td>
-                          <span
-                            className={`type-pill type-${entityType
-                              .toLowerCase()
-                              .replace(/\s+/g, "-")}`}
-                            style={{
-                              backgroundColor: entityTypes.find((type) => type.name === entityType)?.color,
-                              borderColor: entityTypes.find((type) => type.name === entityType)?.color,
-                              color: "#fff",
-                            }}
-                          >
-                            <EntityTypeIcon type={entityType} size={14} />
-                            {entityType}
-                          </span>
+                          <EntityTypeBadge type={entityType} color={entityTypeColor} />
                         </td>
                         <td>
                           <span className="entity-description-cell">
@@ -3874,17 +3965,40 @@ function App() {
                 </table>
                 </div>
                 {entityDetailsEntity && (
-                  <aside className="entity-selected-details" aria-label="Selected entity details">
+                  <aside
+                    className="entity-selected-details"
+                    aria-label="Selected entity details"
+                    style={{
+                      "--entity-type-color": entityTypes.find((type) => type.name === entityDetailsEntity.entityType)?.color ?? "#64748b",
+                    } as CSSProperties}
+                  >
                     <div className="entity-selected-details-heading">
                       <span className="page-eyebrow">ENTITY DETAILS</span>
-                      <button type="button" className="table-button" onClick={() => setEntityDetailsEntity(null)}>Close</button>
+                      <button type="button" className="entity-details-close" onClick={() => setEntityDetailsEntity(null)}>
+                        <svg viewBox="0 0 24 24" aria-hidden="true"><path d="m18 6-12 12M6 6l12 12" /></svg>
+                        <span>Close</span>
+                      </button>
                     </div>
-                    <h3>{entityDetailsEntity.name}</h3>
-                    <div className="entity-selected-details-type">
-                      <EntityTypeIcon type={entityDetailsEntity.entityType} size={15} />
-                      <span>{entityDetailsEntity.entityType}</span>
+                    <div className="entity-selected-details-identity">
+                      <span className="entity-details-icon">
+                        <EntityTypeIcon type={entityDetailsEntity.entityType} size={38} />
+                      </span>
+                      <h3>{entityDetailsEntity.name}</h3>
+                      <div className="entity-selected-details-type">
+                        <EntityTypeIcon type={entityDetailsEntity.entityType} size={18} />
+                        <span>{entityDetailsEntity.entityType}</span>
+                      </div>
                     </div>
-                    <p>{entityDetailsEntity.description || "No description available."}</p>
+                    <div className="entity-details-description">
+                      <svg viewBox="0 0 24 24" aria-hidden="true">
+                        <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" />
+                        <path d="M14 2v6h6M8 13h8M8 17h8" />
+                      </svg>
+                      <div>
+                        <span className="entity-details-description-label">DESCRIPTION</span>
+                        <p>{entityDetailsEntity.description || "No description available."}</p>
+                      </div>
+                    </div>
                   </aside>
                 )}
               </div>
@@ -4014,14 +4128,29 @@ function App() {
                   );
 
                   return (
-                    <div className="relationship-row" key={relationship.id}>
+                    <div
+                      className="relationship-row"
+                      key={relationship.id}
+                      role="button"
+                      tabIndex={0}
+                      aria-label={`Show ${getRelationshipTypeLabel(relationship.relationshipType)} relationship from ${source?.name ?? "Unknown entity"} to ${target?.name ?? "Unknown entity"} in graph`}
+                      onClick={() => handleRelationshipClick(relationship.id)}
+                      onKeyDown={(event) => {
+                        if (event.target !== event.currentTarget) return;
+                        if (event.key === "Enter" || event.key === " ") {
+                          event.preventDefault();
+                          handleRelationshipClick(relationship.id);
+                        }
+                      }}
+                    >
                       <div className="relationship-entity source">
-                        <span className={`relationship-type-icon ${String(source?.entityType ?? "").toLowerCase()}`}>
-                          <EntityTypeIcon type={source?.entityType ?? "UNKNOWN"} size={20} />
-                        </span>
+                        <EntityTypeBadge
+                          type={source?.entityType ?? "UNKNOWN"}
+                          color={source?.entityTypeColor ?? entityTypes.find((type) => type.name === source?.entityType)?.color}
+                          className="relationship-type-badge"
+                        />
                         <div>
                           <strong>{source?.name ?? "Unknown entity"}</strong>
-                          <small>{source?.entityType ?? "UNKNOWN"}</small>
                         </div>
                       </div>
 
@@ -4031,18 +4160,22 @@ function App() {
                       </div>
 
                       <div className="relationship-entity target">
-                        <span className={`relationship-type-icon ${String(target?.entityType ?? "").toLowerCase()}`}>
-                          <EntityTypeIcon type={target?.entityType ?? "UNKNOWN"} size={20} />
-                        </span>
+                        <EntityTypeBadge
+                          type={target?.entityType ?? "UNKNOWN"}
+                          color={target?.entityTypeColor ?? entityTypes.find((type) => type.name === target?.entityType)?.color}
+                          className="relationship-type-badge"
+                        />
                         <div>
                           <strong>{target?.name ?? "Unknown entity"}</strong>
-                          <small>{target?.entityType ?? "UNKNOWN"}</small>
                         </div>
                       </div>
 
                       <button
                         className="table-button danger"
-                        onClick={() => void deleteRelationship(relationship.id)}
+                        onClick={(event) => {
+                          event.stopPropagation();
+                          void deleteRelationship(relationship.id);
+                        }}
                       >
                         Delete
                       </button>
@@ -4066,7 +4199,7 @@ function App() {
               </section>
               <section className="incident-detail-panel">
                 {!selectedIncident ? <div className="empty-management detail-empty"><div className="empty-management-icon">!</div><h3>Select an incident</h3><p>Choose an incident to calculate its dependency blast radius.</p></div> : <>
-                  <div className="incident-detail-header"><div><span className="page-eyebrow">INCIDENT</span><h2>{selectedIncident.title}</h2><p>{selectedIncident.description || "No incident description provided."}</p></div><div className="incident-detail-actions"><button className="secondary-button" onClick={() => openEditIncident(selectedIncident)}>Edit</button><button className="table-button danger" onClick={() => void deleteIncident(selectedIncident)}>Delete</button></div></div>
+                  <div className="incident-detail-header"><div><span className="page-eyebrow">INCIDENT</span><h2>{selectedIncident.title}</h2><p>{selectedIncident.description || "No incident description provided."}</p></div><div className="incident-detail-actions"><button className="secondary-button" onClick={() => navigateToGraphEntity(selectedIncident.affectedEntityId)} disabled={!graph?.nodes.some((entity) => entity.id === selectedIncident.affectedEntityId)}>View in graph</button><button className="secondary-button" onClick={() => openEditIncident(selectedIncident)}>Edit</button><button className="table-button danger" onClick={() => void deleteIncident(selectedIncident)}>Delete</button></div></div>
                   <div className="incident-meta-grid"><div className="incident-meta-card"><span>Severity</span><strong className={`incident-severity ${String(selectedIncident.severity ?? "MEDIUM").toLowerCase()}`}>{selectedIncident.severity ?? "MEDIUM"}</strong></div><div className="incident-meta-card"><span>Status</span>{canChangeIncidentStatus(selectedIncident) ? <IncidentStatusDropdown
                         value={selectedIncident.status ?? "OPEN"}
                         onChange={(status) =>
@@ -4182,14 +4315,14 @@ function App() {
                       const isSelected = simulationEntityId === entity.id;
 
                       return (
-                        <button
-                          key={entity.id}
-                          type="button"
-                          className={`simulation-entity-card ${
-                            isSelected ? "selected" : ""
-                          } ${risk ? risk.level.toLowerCase() : "unknown"}`}
-                          onClick={() => selectSimulationEntity(entity.id)}
-                        >
+                        <div className="simulation-entity-option" key={entity.id}>
+                          <button
+                            type="button"
+                            className={`simulation-entity-card ${
+                              isSelected ? "selected" : ""
+                            } ${risk ? risk.level.toLowerCase() : "unknown"}`}
+                            onClick={() => selectSimulationEntity(entity.id)}
+                          >
                           <div className="simulation-entity-card-top">
                             <span className="simulation-entity-icon">
                               <EntityTypeIcon type={entity.entityType} size={18} />
@@ -4220,7 +4353,18 @@ function App() {
                               <span>Calculating...</span>
                             )}
                           </div>
-                        </button>
+                          </button>
+                          <button
+                            type="button"
+                            className="simulation-entity-graph-button"
+                            onClick={() => navigateToGraphEntity(entity.id)}
+                            aria-label={`View ${entity.name} in graph`}
+                            title="View in graph"
+                          >
+                            <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 12h16m-6-6 6 6-6 6" /></svg>
+                            <span>Check</span>
+                          </button>
+                        </div>
                       );
                       })}
                     </div>
