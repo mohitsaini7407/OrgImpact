@@ -1796,7 +1796,9 @@ function App() {
 
     const edgeOrder = [...relationshipDisplay.visualEdges].sort((left, right) => left.id.localeCompare(right.id));
     const zIndexById = new Map(edgeOrder.map((edge, index) => [edge.id, 1 + index / (edgeOrder.length + 1)]));
-    const hasGraphFocus = Boolean(selectedRelationshipId);
+    const hasGraphFocus = relationshipDisplay.visualEdges.some((relationship) =>
+      relationship.relationshipIds.includes(selectedRelationshipId ?? ""),
+    );
     return relationshipDisplay.visualEdges.map((relationship) => {
       const highlighted = relationship.isIncoming;
       const isSelectedRelationship = relationship.relationshipIds.includes(selectedRelationshipId ?? "");
