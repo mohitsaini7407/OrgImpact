@@ -8580,10 +8580,10 @@ html[data-theme="light"] .password-visibility-toggle:focus-visible {
   z-index:20;
   display:flex;
   align-items:center;
-  gap:9px;
-  width:190px;
+  gap:7px;
+  width:170px;
   min-height:56px;
-  padding:0 15px;
+  padding:0 12px;
   border:1px solid #2c2e36;
   border-radius:999px;
   background:#17191e;
@@ -8594,7 +8594,7 @@ html[data-theme="light"] .password-visibility-toggle:focus-visible {
 }
 
 .app > .main {
-  padding-bottom:100px;
+  padding-bottom:80px;
 }
 
 .chat-shortcut.fullscreen {
@@ -8662,15 +8662,15 @@ html[data-theme="light"] .password-visibility-toggle:focus-visible {
 
 @media (max-width:600px) {
   .app > .main {
-    padding-bottom:88px;
+    padding-bottom:64px;
   }
 
   .chat-shortcut {
     right:12px;
     bottom:12px;
-    width:min(190px,calc(100vw - 24px));
+    width:min(170px,calc(100vw - 24px));
     min-height:52px;
-    padding:0 13px;
+    padding:0 11px;
   }
 }
 
@@ -8839,10 +8839,11 @@ html[data-theme="light"] .password-visibility-toggle:focus-visible {
 }
 
 .chat-widget-panel.fullscreen {
-  --chat-pill-width:190px;
+  --chat-pill-width:170px;
   --chat-pill-height:56px;
   --chat-pill-right:16px;
   --chat-pill-bottom:16px;
+  --chat-pill-center-shift:57px;
   z-index:1000;
   inset:0;
   width:auto;
@@ -8859,7 +8860,8 @@ html[data-theme="light"] .password-visibility-toggle:focus-visible {
 }
 
 .chat-widget-panel.fullscreen .chat-composer {
-  padding-right:calc(var(--chat-pill-right) + var(--chat-pill-height) + 14px);
+  padding-right:calc(var(--chat-pill-right) + var(--chat-pill-center-shift) + var(--chat-pill-height) + 14px);
+  padding-bottom:20px;
 }
 
 .chat-widget-fullscreen-close {
@@ -8995,11 +8997,13 @@ html[data-theme="light"] .password-visibility-toggle:focus-visible {
 
 @keyframes chat-widget-close-control-expand {
   from {
+    right:var(--chat-pill-right,20px);
     width:var(--chat-pill-width,190px);
     height:var(--chat-pill-height,56px);
     border-radius:999px;
   }
   to {
+    right:calc(var(--chat-pill-right,20px) + var(--chat-pill-center-shift,0px));
     width:var(--chat-pill-height);
     height:var(--chat-pill-height);
     border-radius:50%;
@@ -9008,11 +9012,13 @@ html[data-theme="light"] .password-visibility-toggle:focus-visible {
 
 @keyframes chat-widget-close-control-collapse {
   from {
+    right:calc(var(--chat-pill-right,20px) + var(--chat-pill-center-shift,0px));
     width:var(--chat-pill-height);
     height:var(--chat-pill-height);
     border-radius:50%;
   }
   to {
+    right:var(--chat-pill-right,20px);
     width:var(--chat-pill-width,190px);
     height:var(--chat-pill-height,56px);
     border-radius:999px;
@@ -9105,10 +9111,11 @@ html[data-theme="light"] .password-visibility-toggle:focus-visible {
 
 @media (max-width:600px) {
   .chat-widget-panel.fullscreen {
-    --chat-pill-width:min(190px,calc(100vw - 24px));
+    --chat-pill-width:min(170px,calc(100vw - 24px));
     --chat-pill-height:52px;
     --chat-pill-right:12px;
     --chat-pill-bottom:12px;
+    --chat-pill-center-shift:59px;
   }
 
   .chat-widget-fullscreen-close {
@@ -9116,7 +9123,8 @@ html[data-theme="light"] .password-visibility-toggle:focus-visible {
   }
 
   .chat-widget-panel.fullscreen .chat-composer {
-    padding-right:calc(var(--chat-pill-right) + var(--chat-pill-height) + 14px);
+    padding-right:calc(var(--chat-pill-right) + var(--chat-pill-center-shift) + var(--chat-pill-height) + 14px);
+    padding-bottom:14px;
   }
 }
 
@@ -10011,6 +10019,7 @@ html[data-theme="light"] .graph-mini-viewport {
 }
 
 .dashboard-experience .graph-container {
+  position: relative;
   height: clamp(460px, 64vh, 760px);
   min-height: 460px;
   background-color: var(--map-bg);
@@ -10022,22 +10031,91 @@ html[data-theme="light"] .graph-mini-viewport {
 }
 
 .dashboard-experience .react-flow__controls {
+  position: absolute !important;
+  bottom: 12px !important;
+  left: 12px !important;
+  top: auto !important;
+  right: auto !important;
+  margin: 0 !important;
+  z-index: 5 !important;
+  transform-origin: bottom left;
+  transform: scale(var(--screen-zoom-scale, 1));
+  transition: transform 0.2s cubic-bezier(0.16, 1, 0.3, 1);
   overflow: hidden;
   border: 1px solid var(--map-border);
   border-radius: 9px;
-  box-shadow: 0 6px 18px rgba(0, 0, 0, .2);
+  box-shadow: 0 6px 18px rgba(0, 0, 0, .25);
 }
 
 .dashboard-experience .react-flow__controls-button {
+  width: 26px;
+  height: 26px;
   border-color: var(--map-border);
   background: var(--map-surface);
   fill: var(--map-text);
 }
 
+.dashboard-experience .react-flow__controls-button svg {
+  width: 12px;
+  height: 12px;
+  fill: currentColor;
+}
+
 .dashboard-experience .react-flow__minimap {
+  position: absolute !important;
+  bottom: 12px !important;
+  right: 12px !important;
+  top: auto !important;
+  left: auto !important;
+  margin: 0 !important;
+  z-index: 5 !important;
+  width: 160px !important;
+  height: 105px !important;
+  transform-origin: bottom right;
+  transform: scale(var(--screen-zoom-scale, 1));
+  transition: transform 0.2s cubic-bezier(0.16, 1, 0.3, 1);
   border: 1px solid var(--map-border);
   border-radius: 9px;
   background: #101a29;
+  box-shadow: 0 6px 18px rgba(0, 0, 0, .25);
+}
+
+html[data-theme="light"] .dashboard-experience .react-flow__minimap {
+  background: #ffffff;
+}
+
+.dashboard-experience .react-flow__attribution,
+.react-flow__attribution {
+  display: none !important;
+}
+
+/* Screen zoom and responsive scaling fallbacks */
+@media (max-width: 1400px), (max-height: 820px), (-webkit-min-device-pixel-ratio: 1.2), (min-resolution: 115dpi) {
+  .dashboard-experience .react-flow__controls,
+  .dashboard-experience .react-flow__minimap {
+    --screen-zoom-scale: 0.85;
+  }
+}
+
+@media (max-width: 1150px), (max-height: 700px), (-webkit-min-device-pixel-ratio: 1.45), (min-resolution: 139dpi) {
+  .dashboard-experience .react-flow__controls,
+  .dashboard-experience .react-flow__minimap {
+    --screen-zoom-scale: 0.74;
+  }
+}
+
+@media (max-width: 900px), (max-height: 600px), (-webkit-min-device-pixel-ratio: 1.75), (min-resolution: 168dpi) {
+  .dashboard-experience .react-flow__controls,
+  .dashboard-experience .react-flow__minimap {
+    --screen-zoom-scale: 0.64;
+  }
+}
+
+@media (max-width: 700px), (max-height: 500px), (-webkit-min-device-pixel-ratio: 2.0), (min-resolution: 192dpi) {
+  .dashboard-experience .react-flow__controls,
+  .dashboard-experience .react-flow__minimap {
+    --screen-zoom-scale: 0.54;
+  }
 }
 
 .node-risk-indicator,
@@ -11156,6 +11234,7 @@ html[data-theme="light"] .entity-details-description p {
   overflow:hidden;
   display:-webkit-box;
   -webkit-box-orient:vertical;
+  line-clamp:2;
   -webkit-line-clamp:2;
   overflow-wrap:anywhere;
   line-height:1.15;

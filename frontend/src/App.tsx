@@ -484,6 +484,49 @@ function App() {
   const [graphDragging, setGraphDragging] = useState(false);
   const [graphSearch, setGraphSearch] = useState("");
   const [showImpactPanel, setShowImpactPanel] = useState(true);
+  const [screenZoomScale, setScreenZoomScale] = useState(1);
+
+  useEffect(() => {
+    function updateScreenZoomScale() {
+      const dpr = window.devicePixelRatio || 1;
+      const w = window.innerWidth;
+      const h = window.innerHeight;
+
+      let scale = 1;
+      if (dpr >= 2.0 || w <= 700 || h <= 500) {
+        scale = 0.54;
+      } else if (dpr >= 1.75 || w <= 900 || h <= 600) {
+        scale = 0.64;
+      } else if (dpr >= 1.45 || w <= 1150 || h <= 700) {
+        scale = 0.74;
+      } else if (dpr >= 1.2 || w <= 1400 || h <= 820) {
+        scale = 0.85;
+      }
+      setScreenZoomScale(scale);
+    }
+
+    updateScreenZoomScale();
+    window.addEventListener("resize", updateScreenZoomScale);
+
+    let mql: MediaQueryList | null = null;
+    try {
+      mql = window.matchMedia(`(resolution: ${window.devicePixelRatio}dppx)`);
+      mql.addEventListener("change", updateScreenZoomScale);
+    } catch {
+      // fallback
+    }
+
+    return () => {
+      window.removeEventListener("resize", updateScreenZoomScale);
+      if (mql) {
+        try {
+          mql.removeEventListener("change", updateScreenZoomScale);
+        } catch {
+          // fallback
+        }
+      }
+    };
+  }, []);
 
   const [entityModalOpen, setEntityModalOpen] =
     useState(false);
@@ -563,6 +606,8 @@ function App() {
   const profileMenuPanelRef = useRef<HTMLDivElement | null>(null);
   const notificationControlRef = useRef<HTMLDivElement | null>(null);
   const simulationFilterRef = useRef<HTMLDivElement | null>(null);
+  const chatWidgetPanelRef = useRef<HTMLElement | null>(null);
+  const chatShortcutRef = useRef<HTMLButtonElement | null>(null);
   const chatBottomRef = useRef<HTMLDivElement | null>(null);
   const chatPendingMessageRef = useRef<{ content: string; id: string } | null>(null);
   const chatShortcutClickTimerRef = useRef<number | null>(null);
@@ -1542,6 +1587,18 @@ function App() {
     return () => window.removeEventListener("keydown", closeOnEscape);
   }, [chatWidgetOpen, chatWidgetFullscreen, chatWidgetClosing]);
 
+  useEffect(() => {
+    if (!chatWidgetOpen || chatWidgetFullscreen || chatWidgetClosing) return;
+    const closeOnOutsidePointer = (event: PointerEvent) => {
+      const target = event.target;
+      if (!(target instanceof Node)) return;
+      if (chatWidgetPanelRef.current?.contains(target) || chatShortcutRef.current?.contains(target)) return;
+      closeChatWidget();
+    };
+    document.addEventListener("pointerdown", closeOnOutsidePointer);
+    return () => document.removeEventListener("pointerdown", closeOnOutsidePointer);
+  }, [chatWidgetOpen, chatWidgetFullscreen, chatWidgetClosing]);
+
   useEffect(() => () => {
     if (chatShortcutClickTimerRef.current !== null) {
       window.clearTimeout(chatShortcutClickTimerRef.current);
@@ -1739,16 +1796,11 @@ function App() {
 
     const edgeOrder = [...relationshipDisplay.visualEdges].sort((left, right) => left.id.localeCompare(right.id));
     const zIndexById = new Map(edgeOrder.map((edge, index) => [edge.id, 1 + index / (edgeOrder.length + 1)]));
-    const hasGraphFocus = Boolean(selectedRelationshipId || (selectedEntity && focusedEntityId === selectedEntity.id));
+    const hasGraphFocus = Boolean(selectedRelationshipId);
     return relationshipDisplay.visualEdges.map((relationship) => {
       const highlighted = relationship.isIncoming;
       const isSelectedRelationship = relationship.relationshipIds.includes(selectedRelationshipId ?? "");
-      const isConnectedToFocusedEntity = Boolean(
-        selectedEntity &&
-        focusedEntityId === selectedEntity.id &&
-        (relationship.source === selectedEntity.id || relationship.target === selectedEntity.id),
-      );
-      const isGraphFocusEdge = isSelectedRelationship || isConnectedToFocusedEntity;
+      const isGraphFocusEdge = isSelectedRelationship;
       const isParallel = relationship.parallelCount > 1;
 
       return {
@@ -3594,6 +3646,7 @@ function App() {
 
                 <div
                   className="graph-container"
+                  style={{ "--screen-zoom-scale": screenZoomScale } as CSSProperties}
                 >
                   {loading && (
                     <div className="overlay">
@@ -3627,6 +3680,7 @@ function App() {
                         edgeTypes={graphEdgeTypes}
                       nodesDraggable
                       onlyRenderVisibleElements
+                      proOptions={{ hideAttribution: true }}
                       fitView
                       fitViewOptions={{
                         padding: 0.25,
@@ -3660,8 +3714,8 @@ function App() {
                       }}
                     >
                       <Background gap={28} size={1} color="#243249" />
-                      <Controls />
-                      <MiniMap pannable zoomable />
+                      <Controls position="bottom-left" />
+                      <MiniMap position="bottom-right" pannable zoomable />
                     </ReactFlow>
                   )}
                   {!loading && !error && graph && visibleNodes.length === 0 && <div className="graph-search-empty">No entities match your search.</div>}
@@ -4852,6 +4906,7 @@ function App() {
 
       {chatWidgetOpen && (
         <section
+          ref={chatWidgetPanelRef}
           className={`chat-widget-panel ${chatWidgetFullscreen ? "fullscreen" : ""} ${chatWidgetClosing ? "closing" : ""}`}
           role="dialog"
           aria-modal="false"
@@ -5012,6 +5067,7 @@ function App() {
       )}
 
       <button
+        ref={chatShortcutRef}
         type="button"
         className={`chat-shortcut ${chatWidgetOpen || activeView === "chat" ? "active" : ""} ${chatWidgetFullscreen ? "fullscreen" : ""}`}
         onClick={(event) => {
