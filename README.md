@@ -53,6 +53,36 @@ When an entity experiences an incident, OrgImpact traverses upstream dependency 
 
 ---
 
+## 📡 API Reference
+
+Protected endpoints require `Authorization: Bearer <JWT>`. The Express backend serves JSON responses without an `/api` prefix.
+
+| Domain | Method & Endpoint | Description |
+| --- | --- | --- |
+| **System** | `GET /health` | Service health & liveness check |
+| **Auth** | `POST /auth/register`<br>`POST /auth/login` | Account registration & authentication (rate-limited) |
+| | `GET /auth/me`<br>`PATCH /auth/me` | Fetch / update current user profile |
+| **Organizations** | `POST /organizations`<br>`GET /organizations` | Create or list user organizations |
+| | `POST /organizations/join-requests`<br>`PATCH .../:requestId` | Request to join via code; owner approval/rejection |
+| | `POST /memberships`<br>`PATCH /memberships/:id` | Manage organization members & roles (`OWNER`, `ADMIN`, `MEMBER`) |
+| | `POST /invitations`<br>`POST /invitations/:token/accept` | Generate and accept organization invitations |
+| **Teams** | `POST /teams`<br>`GET /teams/organization/:id` | Create and list organization teams |
+| | `POST /team-members`<br>`PATCH /team-members/:id` | Assign team members & roles (`MEMBER`, `LEAD`) |
+| **Entities & Types** | `GET /entities/organization/:id`<br>`POST /entities` | Inventory entities with criticality (`LOW` to `CRITICAL`) |
+| | `GET /entity-types/organization/:id`<br>`POST /entity-types` | Custom entity categories and color tags |
+| **Relationships** | `GET /relationships/organization/:id`<br>`POST /relationships` | Directed dependencies (`DEPENDS_ON`, `CALLS`, etc.) |
+| | `GET /relationship-types/organization/:id` | List organization relationship types |
+| **Impact & Graph** | `GET /graph/organization/:id` | Full dependency graph nodes, edges, and statistics |
+| | `GET /impact/:entityId` | Upstream blast radius analysis with traversal depth |
+| **Incidents** | `POST /incidents`<br>`GET /incidents/organization/:id` | Log incidents (`OPEN`, `INVESTIGATING`, `RESOLVED`) |
+| | `GET /incidents/:id/impact` | Direct blast radius analysis for an incident's entity |
+| **Notifications** | `GET /notifications/organization/:id`<br>`PATCH .../read-all` | User incident & organization notifications |
+| **Chat & Real-Time** | `POST /chat/organizations/:id/conversations/direct`<br>`POST .../teams/:teamId` | Direct and team message channels |
+| | `GET /chat/conversations/:id/messages` | Paginated/persisted conversation messages |
+| | *Socket.IO Handshake & Events* | Real-time rooms (`join-organization`), `chat:message`, `chat:typing`, and entity event streaming via Redis |
+
+---
+
 ## ⚡ Quick Start
 
 ### Prerequisites
