@@ -30,12 +30,21 @@ export default function DependencyEdge(props: EdgeProps<DependencyEdgeModel>) {
     markerEnd,
     style,
     selected,
+    sourceX,
+    sourceY,
+    targetX,
+    targetY,
   } = props;
 
   const points = data?.points ?? [];
   const geometry = useMemo(
-    () => buildDependencyPathGeometry(points, []),
-    [points],
+    () => buildDependencyPathGeometry(
+      points.length >= 2
+        ? points
+        : [{ x: sourceX, y: sourceY }, { x: targetX, y: targetY }],
+      [],
+    ),
+    [points, sourceX, sourceY, targetX, targetY],
   );
 
   if (!geometry.path) return null;

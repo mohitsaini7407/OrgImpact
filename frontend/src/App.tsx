@@ -1610,6 +1610,14 @@ function App() {
   }, [activeView, token]);
 
   useEffect(() => {
+    if (activeView === "relationships" && token && organizationId) {
+      void loadGraph();
+      void loadRelationshipTypes();
+      void loadEntityTypes();
+    }
+  }, [activeView, token, organizationId]);
+
+  useEffect(() => {
     if (selectedTeam) {
       void loadTeamMembers(selectedTeam.id);
     } else {
@@ -2383,7 +2391,7 @@ function App() {
       }
 
       setConfirmDialog(null);
-      // await loadGraph(); // graph updates through socket events.
+      await loadGraph();
     } catch (err) {
       console.error(err);
       setEntityError(
@@ -2467,9 +2475,12 @@ function App() {
       (type) => type.name.trim().toLocaleUpperCase() === "DEPENDS_ON",
     );
 
+    const sourceId = entities[0]?.id ?? "";
+    const targetId = entities.find((entity) => entity.id !== sourceId)?.id ?? entities[1]?.id ?? "";
+
     setRelationshipForm({
-      sourceEntityId: entities[0]?.id ?? "",
-      targetEntityId: entities[1]?.id ?? "",
+      sourceEntityId: sourceId,
+      targetEntityId: targetId,
       relationshipType: defaultRelationshipType?.name ?? relationshipTypes[0]?.name ?? "DEPENDS_ON",
     });
     setRelationshipError("");
@@ -2499,11 +2510,11 @@ function App() {
       setRelationshipError("Source and target entities must be different.");
       return;
     }
-    if (!relationshipTypes.some((type) => type.name === relationshipType)) {
+    const normalizedType = relationshipType.trim().toLocaleUpperCase();
+    if (!relationshipTypes.some((type) => type.name.trim().toLocaleUpperCase() === normalizedType)) {
       setRelationshipError("Choose a relationship type managed by this organization.");
       return;
     }
-    const normalizedType = relationshipType.trim().toLocaleUpperCase();
     if (graph?.edges.some((edge) => edge.source === sourceEntityId && edge.target === targetEntityId && edge.relationshipType.trim().toLocaleUpperCase() === normalizedType)) {
       setRelationshipError("This relationship already exists between these entities.");
       return;
@@ -2609,7 +2620,8 @@ function App() {
       setSelectedEntity(null);
       setImpact(null);
       setFocusedEntityId(null);
-      // await loadGraph();
+      setConfirmDialog(null);
+      await loadGraph();
     } catch (err) {
       console.error(err);
       setRelationshipError(
@@ -3681,7 +3693,6 @@ function App() {
                         nodeTypes={graphNodeTypes}
                         edgeTypes={graphEdgeTypes}
                       nodesDraggable
-                      onlyRenderVisibleElements
                       proOptions={{ hideAttribution: true }}
                       fitView
                       fitViewOptions={{
@@ -4154,16 +4165,29 @@ function App() {
               {relationshipTypeError && <div className="relationship-type-error" role="alert">{relationshipTypeError}</div>}
             </section>
 
-            {relationshipError && !relationshipModalOpen && (
-              <div className="entity-page-error">{relationshipError}</div>
-            )}
+            {loading ? (
+              <div className="entity-empty-state">
+                <div className="loader" />
+                <p>Loading relationships...</p>
+              </div>
+            ) : (error || relationshipError) && !relationshipModalOpen ? (
+              <div className="entity-page-error">{error || relationshipError}</div>
+            ) : null}
 
-            {(graph?.edges.length ?? 0) === 0 ? (
+            {!loading && !error && graphWarnings.map((warning) => (
+              <div className="graph-data-warning" role="status" key={warning}>
+                {warning}
+              </div>
+            ))}
+
+            {!loading && (graph?.edges.length ?? 0) === 0 ? (
               <div className="entity-empty-state">
                 <div className="empty-icon">↔</div>
                 <h3>No relationships yet</h3>
                 <p>
-                  Connect two entities to start building your dependency graph.
+                  {(graph?.nodes.length ?? 0) < 2
+                    ? "Create at least two entities in the Entities tab first to start connecting them."
+                    : "Connect two entities to start building your dependency graph."}
                 </p>
                 <button
                   className="primary-button"
@@ -4173,7 +4197,7 @@ function App() {
                   Create Relationship
                 </button>
               </div>
-            ) : (
+            ) : !loading && graph ? (
               <div className="relationship-list">
                 {(graph?.edges ?? []).map((relationship) => {
                   const source = graph?.nodes.find(
@@ -4239,7 +4263,7 @@ function App() {
                   );
                 })}
               </div>
-            )}
+            ) : null}
           </section>
         ) : activeView === "incidents" ? (
           <section className="incidents-page">
@@ -4254,27 +4278,35 @@ function App() {
                 {incidentsLoading ? <div className="team-loading"><div className="small-loader" /> Loading incidents...</div> : incidents.length === 0 ? <div className="empty-management"><div className="empty-management-icon">!</div><h3>No incidents yet</h3><p>Create an incident to see its blast radius.</p><button className="primary-button" onClick={openCreateIncident} disabled={!graph?.nodes.length}>Create Incident</button></div> : <div className="incident-card-list">{incidents.map((incident) => { const severity = incident.severity ?? "MEDIUM"; const status = incident.status ?? "OPEN"; return <button key={incident.id} className={`incident-card ${selectedIncident?.id === incident.id ? "active" : ""}`} onClick={() => selectIncident(incident)}><div className="incident-card-top"><span className={`incident-severity ${String(severity).toLowerCase()}`}>{severity}</span><span className={`incident-status ${String(status).toLowerCase()}`}>{status}</span></div><strong>{incident.title}</strong><span className="incident-affected">Affects: {incident.affectedEntity?.name ?? "Unknown entity"}</span><small>{new Date(incident.createdAt).toLocaleString()}</small></button>; })}</div>}
               </section>
               <section className="incident-detail-panel">
-                {!selectedIncident ? <div className="empty-management detail-empty"><div className="empty-management-icon">!</div><h3>Select an incident</h3><p>Choose an incident to calculate its dependency blast radius.</p></div> : <>
-                  <div className="incident-detail-header"><div><span className="page-eyebrow">INCIDENT</span><h2>{selectedIncident.title}</h2><p>{selectedIncident.description || "No incident description provided."}</p></div><div className="incident-detail-actions"><button className="secondary-button" onClick={() => navigateToGraphEntity(selectedIncident.affectedEntityId)} disabled={!graph?.nodes.some((entity) => entity.id === selectedIncident.affectedEntityId)}>View in graph</button><button className="secondary-button" onClick={() => openEditIncident(selectedIncident)}>Edit</button><button className="table-button danger" onClick={() => void deleteIncident(selectedIncident)}>Delete</button></div></div>
-                  <div className="incident-meta-grid"><div className="incident-meta-card"><span>Severity</span><strong className={`incident-severity ${String(selectedIncident.severity ?? "MEDIUM").toLowerCase()}`}>{selectedIncident.severity ?? "MEDIUM"}</strong></div><div className="incident-meta-card"><span>Status</span>{canChangeIncidentStatus(selectedIncident) ? <IncidentStatusDropdown
-                        value={selectedIncident.status ?? "OPEN"}
-                        onChange={(status) =>
-                          void updateIncidentStatus(selectedIncident, status)
-                        }
-                      /> : <span className={`incident-status ${String(selectedIncident.status ?? "OPEN").toLowerCase()}`} title="Only the status updater, incident creator, organization owner, or an admin can change this status">{String(selectedIncident.status ?? "OPEN").charAt(0) + String(selectedIncident.status ?? "OPEN").slice(1).toLowerCase()}</span>}</div><div className="incident-meta-card"><span>Affected Entity</span><strong>{selectedIncident.affectedEntity?.name ?? "Unknown entity"}</strong></div><div className="incident-meta-card"><span>Created</span><strong>{new Date(selectedIncident.createdAt).toLocaleDateString()}</strong></div></div>
-                  <section className="incident-people-panel">
-                    <div className="section-heading-row"><div><span className="page-eyebrow">OWNERSHIP</span><h3>Incident participants</h3></div></div>
-                    <div className="incident-people-list">
-                      <div className="incident-person-row"><span>Created by</span><div><strong>{selectedIncident.createdBy?.name || "Unknown user"}</strong><small>{selectedIncident.createdBy?.email || ""}</small></div></div>
-                      {selectedIncident.investigatedBy && <div className="incident-person-row"><span>Investigating</span><div><strong>{selectedIncident.investigatedBy.name}</strong><small>{selectedIncident.investigatedBy.email}</small></div></div>}
-                      {selectedIncident.resolvedBy && <div className="incident-person-row"><span>Resolved by</span><div><strong>{selectedIncident.resolvedBy.name}</strong><small>{selectedIncident.resolvedBy.email}</small></div></div>}
-                      {selectedIncident.status === "OPEN" && !selectedIncident.investigatedBy && !selectedIncident.resolvedBy && <p className="incident-people-empty">No one has started investigating or resolved this incident. Its status remains Open.</p>}
-                      {selectedIncident.status === "INVESTIGATING" && !selectedIncident.investigatedBy && <p className="incident-people-empty">No investigator was recorded for this incident.</p>}
-                      {selectedIncident.status === "RESOLVED" && !selectedIncident.resolvedBy && <p className="incident-people-empty">No resolver was recorded for this incident.</p>}
-                    </div>
-                  </section>
-                  <div className="incident-blast-radius"><div className="section-heading-row"><div><span className="page-eyebrow">BLAST RADIUS</span><h3>Potentially Affected Systems</h3></div>{impact && <strong>{impact.totalAffected} affected</strong>}</div>{impactLoading ? <div className="team-loading"><div className="small-loader" /> Calculating dependency blast radius...</div> : impactError ? <div className="page-error">{impactError}</div> : impact ? <><div className="impact-overview"><div className="impact-metric"><strong>{impact.totalAffected}</strong><span>Affected</span></div><div className="impact-metric"><strong>{impact.affectedEntities.filter((e) => e.depth === 1).length}</strong><span>Direct</span></div><div className="impact-metric"><strong>{impact.affectedEntities.length ? Math.max(...impact.affectedEntities.map((e) => e.depth)) : 0}</strong><span>Max Depth</span></div></div><div className="affected-section">{impact.totalAffected === 0 ? <div className="no-impact"><strong>No downstream impact detected</strong><p>No dependent entities were found.</p></div> : impact.affectedEntities.map((entity) => <button className="affected-item" key={entity.id} onClick={() => handleIncidentAffectedEntityClick(entity.id)}><div className="affected-main"><strong>{entity.name}</strong><span className="affected-entity-type"><EntityTypeIcon type={entity.entityType} size={13} />{entity.entityType}</span></div><div className="depth-badge">Depth {entity.depth}</div></button>)}</div></> : <div className="empty-management"><p>Select the incident to calculate impact.</p></div>}</div>
-                </>}
+                {!selectedIncident ? (
+                  <div className="empty-management detail-empty">
+                    <div className="empty-management-icon">!</div>
+                    <h3>Select an incident</h3>
+                    <p>Choose an incident to calculate its dependency blast radius.</p>
+                  </div>
+                ) : (
+                  <>
+                    <div className="incident-detail-header"><div><span className="page-eyebrow">INCIDENT</span><h2>{selectedIncident.title}</h2><p>{selectedIncident.description || "No incident description provided."}</p></div><div className="incident-detail-actions"><button className="secondary-button" onClick={() => navigateToGraphEntity(selectedIncident.affectedEntityId)} disabled={!graph?.nodes.some((entity) => entity.id === selectedIncident.affectedEntityId)}>View in graph</button><button className="secondary-button" onClick={() => openEditIncident(selectedIncident)}>Edit</button><button className="table-button danger" onClick={() => void deleteIncident(selectedIncident)}>Delete</button></div></div>
+                    <div className="incident-meta-grid"><div className="incident-meta-card"><span>Severity</span><strong className={`incident-severity ${String(selectedIncident.severity ?? "MEDIUM").toLowerCase()}`}>{selectedIncident.severity ?? "MEDIUM"}</strong></div><div className="incident-meta-card"><span>Status</span>{canChangeIncidentStatus(selectedIncident) ? <IncidentStatusDropdown
+                          value={selectedIncident.status ?? "OPEN"}
+                          onChange={(status) =>
+                            void updateIncidentStatus(selectedIncident, status)
+                          }
+                        /> : <span className={`incident-status ${String(selectedIncident.status ?? "OPEN").toLowerCase()}`} title="Only the status updater, incident creator, organization owner, or an admin can change this status">{String(selectedIncident.status ?? "OPEN").charAt(0) + String(selectedIncident.status ?? "OPEN").slice(1).toLowerCase()}</span>}</div><div className="incident-meta-card"><span>Affected Entity</span><strong>{selectedIncident.affectedEntity?.name ?? "Unknown entity"}</strong></div><div className="incident-meta-card"><span>Created</span><strong>{new Date(selectedIncident.createdAt).toLocaleDateString()}</strong></div></div>
+                    <section className="incident-people-panel">
+                      <div className="section-heading-row"><div><span className="page-eyebrow">OWNERSHIP</span><h3>Incident participants</h3></div></div>
+                      <div className="incident-people-list">
+                        <div className="incident-person-row"><span>Created by</span><div><strong>{selectedIncident.createdBy?.name || "Unknown user"}</strong><small>{selectedIncident.createdBy?.email || ""}</small></div></div>
+                        {selectedIncident.investigatedBy && <div className="incident-person-row"><span>Investigating</span><div><strong>{selectedIncident.investigatedBy.name}</strong><small>{selectedIncident.investigatedBy.email}</small></div></div>}
+                        {selectedIncident.resolvedBy && <div className="incident-person-row"><span>Resolved by</span><div><strong>{selectedIncident.resolvedBy.name}</strong><small>{selectedIncident.resolvedBy.email}</small></div></div>}
+                        {selectedIncident.status === "OPEN" && !selectedIncident.investigatedBy && !selectedIncident.resolvedBy && <p className="incident-people-empty">No one has started investigating or resolved this incident. Its status remains Open.</p>}
+                        {selectedIncident.status === "INVESTIGATING" && !selectedIncident.investigatedBy && <p className="incident-people-empty">No investigator was recorded for this incident.</p>}
+                        {selectedIncident.status === "RESOLVED" && !selectedIncident.resolvedBy && <p className="incident-people-empty">No resolver was recorded for this incident.</p>}
+                      </div>
+                    </section>
+                    <div className="incident-blast-radius"><div className="section-heading-row"><div><span className="page-eyebrow">BLAST RADIUS</span><h3>Potentially Affected Systems</h3></div>{impact && <strong>{impact.totalAffected} affected</strong>}</div>{impactLoading ? <div className="team-loading"><div className="small-loader" /> Calculating dependency blast radius...</div> : impactError ? <div className="page-error">{impactError}</div> : impact ? <><div className="impact-overview"><div className="impact-metric"><strong>{impact.totalAffected}</strong><span>Affected</span></div><div className="impact-metric"><strong>{impact.affectedEntities.filter((e) => e.depth === 1).length}</strong><span>Direct</span></div><div className="impact-metric"><strong>{impact.affectedEntities.length ? Math.max(...impact.affectedEntities.map((e) => e.depth)) : 0}</strong><span>Max Depth</span></div></div><div className="affected-section">{impact.totalAffected === 0 ? <div className="no-impact"><strong>No downstream impact detected</strong><p>No dependent entities were found.</p></div> : impact.affectedEntities.map((entity) => <button className="affected-item" key={entity.id} onClick={() => handleIncidentAffectedEntityClick(entity.id)}><div className="affected-main"><strong>{entity.name}</strong><span className="affected-entity-type"><EntityTypeIcon type={entity.entityType} size={13} />{entity.entityType}</span></div><div className="depth-badge">Depth {entity.depth}</div></button>)}</div></> : <div className="empty-management"><p>Select the incident to calculate impact.</p></div>}</div>
+                  </>
+                )}
               </section>
             </div>
           </section>

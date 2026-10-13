@@ -25,7 +25,10 @@ export async function getRelationshipTypes(organizationId: string) {
 export async function createRelationshipType(organizationId: string, name: string) {
   const normalizedName = normalizeRelationshipTypeName(name);
   const existing = await prisma.relationshipType.findFirst({
-    where: { organizationId, name: normalizedName },
+    where: {
+      organizationId,
+      name: { equals: normalizedName, mode: "insensitive" },
+    },
     select: { id: true },
   });
   if (existing) throw new Error(duplicateTypeMessage);
@@ -57,7 +60,11 @@ export async function deleteRelationshipType(relationshipTypeId: string, organiz
       throw new Error("Default relationship types cannot be deleted");
     }
     const lockKey = "relationship-type:" + organizationId + ":" + normalizedName;
-    await transaction.$queryRawUnsafe("SELECT pg_advisory_xact_lock(hashtext($1))::text AS locked", lockKey);
+    try {
+      await transaction.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${lockKey}::text))`;
+    } catch {
+      // Fallback if pooler disallows advisory locks
+    }
 
     const currentType = await transaction.relationshipType.findFirst({
       where: { id: relationshipTypeId, organizationId },

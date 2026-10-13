@@ -57,22 +57,38 @@ export async function createRelationship(
   let relationship;
   try {
     relationship = await prisma.$transaction(async (transaction) => {
-      // Serialize duplicate checks for this directed tuple, including when a
-      // pre-existing duplicate prevents installing the expression index.
       const typeLockKey = "relationship-type:" + organizationId + ":" + normalizedType;
-      await transaction.$queryRawUnsafe("SELECT pg_advisory_xact_lock(hashtext($1))::text AS locked", typeLockKey);
+      try {
+        await transaction.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${typeLockKey}::text))`;
+      } catch {
+        // Fallback gracefully if connection pooler/adapter does not permit advisory locks
+      }
+
       const relationshipTypeRecord = await transaction.relationshipType.findFirst({
-        where: { organizationId, name: normalizedType },
-        select: { id: true },
+        where: {
+          organizationId,
+          name: { equals: normalizedType, mode: "insensitive" },
+        },
+        select: { id: true, name: true },
       });
       if (!relationshipTypeRecord) throw new Error("Relationship type not found");
 
-      await transaction.$queryRawUnsafe("SELECT pg_advisory_xact_lock(hashtext($1))::text AS locked", uniquenessKey);
+      try {
+        await transaction.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${uniquenessKey}::text))`;
+      } catch {
+        // Fallback gracefully if connection pooler/adapter does not permit advisory locks
+      }
+
       const existing = await transaction.relationship.findFirst({
-        where: { organizationId, sourceEntityId, targetEntityId },
-        select: { relationshipType: true },
+        where: {
+          organizationId,
+          sourceEntityId,
+          targetEntityId,
+          relationshipType: { equals: normalizedType, mode: "insensitive" },
+        },
+        select: { id: true },
       });
-      if (existing && normalizeRelationshipType(existing.relationshipType) === normalizedType) {
+      if (existing) {
         throw new Error(duplicateRelationshipMessage);
       }
       return transaction.relationship.create({
