@@ -164,10 +164,13 @@ test("automatic layout gives every node non-overlapping dynamic bounds", () => {
 test("long descriptions expand graph nodes while respecting the port height", () => {
   const shortDescription = getGraphNodeDimensions("Short description");
   const longDescription = getGraphNodeDimensions("A detailed description ".repeat(24));
+  const wideCharacterDescription = getGraphNodeDimensions("界".repeat(120));
+  const asciiDescription = getGraphNodeDimensions("a".repeat(120));
   const highDegreeNode = getGraphNodeDimensions("Short description", 12);
 
   assert.ok(longDescription.width > shortDescription.width);
   assert.ok(longDescription.height > shortDescription.height);
+  assert.ok(wideCharacterDescription.height > asciiDescription.height);
   assert.ok(highDegreeNode.height >= 13 * 22);
 });
 

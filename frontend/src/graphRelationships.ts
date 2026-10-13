@@ -37,8 +37,12 @@ export type GraphNodePosition = Point & { id: string; layer: number; width?: num
 export function getGraphNodeDimensions(description?: string | null, portCount = 0) {
   const text = description?.trim() ?? "";
   const width = Math.min(420, Math.max(280, 280 + Math.max(0, text.length - 50) * 0.8));
-  const charactersPerLine = Math.max(1, Math.floor((width - 64) / 8));
-  const descriptionLines = text ? Math.ceil(text.length / charactersPerLine) : 0;
+  const availableTextWidth = Math.max(1, width - 64);
+  const estimatedTextWidth = Array.from(text).reduce(
+    (total, character) => total + (character.length > 1 ? 16 : /[^\u0000-\u00ff]/u.test(character) ? 12 : 8),
+    0,
+  );
+  const descriptionLines = text ? Math.ceil(estimatedTextWidth / availableTextWidth) : 0;
   const contentHeight = Math.max(170, 148 + descriptionLines * 18);
   const portHeight = (Math.max(0, portCount) + 1) * 22;
 

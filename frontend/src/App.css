@@ -408,7 +408,7 @@ button {
 }
 
 .node-description {
-  overflow:hidden;
+  flex:0 0 auto;
   margin-top:4px;
   color:#cbd5e1;
   font-size:12px;
@@ -11247,8 +11247,10 @@ html[data-theme="light"] .entity-details-description p {
 .dashboard-experience .graph-node-type-card .node-description {
   position:relative;
   z-index:1;
+  flex:0 0 auto;
   width:100%;
   max-width:100%;
+  overflow:visible;
   color:#fff;
   font-size:12px;
   font-weight:700;
