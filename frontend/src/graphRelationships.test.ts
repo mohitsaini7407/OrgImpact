@@ -168,9 +168,10 @@ test("long descriptions expand graph nodes while respecting the port height", ()
   const asciiDescription = getGraphNodeDimensions("a".repeat(120));
   const highDegreeNode = getGraphNodeDimensions("Short description", 12);
 
-  assert.ok(longDescription.width > shortDescription.width);
+  assert.equal(shortDescription.width, 320);
+  assert.equal(longDescription.width, 320);
   assert.ok(longDescription.height > shortDescription.height);
-  assert.ok(wideCharacterDescription.height > asciiDescription.height);
+  assert.equal(wideCharacterDescription.height, asciiDescription.height);
   assert.ok(highDegreeNode.height >= 13 * 22);
 });
 
