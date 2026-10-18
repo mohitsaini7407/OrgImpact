@@ -11339,11 +11339,11 @@ html[data-theme="light"] .dashboard-experience .graph-node-type-card .node-name 
 }
 
 html[data-theme="light"] .dashboard-experience .graph-node-type-card .node-description {
-  color:#fff;
+  color:#000;
 }
 
 html[data-theme="light"] .app .dashboard-experience .graph-node-type-card .node-description {
-  color:#fff;
+  color:#000;
 }
 
 html[data-theme="dark"] .app .dashboard-experience .graph-node-type-card .node-description {
